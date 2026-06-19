@@ -3160,12 +3160,65 @@ z `<algorithm>` — pod warunkiem, że nie wykonują operacji niedozwolonych w `
 
 ***
 
-#### (C++23): rozszerzenia `ranges` i `format`
+#### (C++20/C++23): `std::ranges` i `std::format`
 
-C++23 rozszerza:
+##### std::ranges` (C++20)
 
-* `std::ranges` o nowe algorytmy,
-* `std::format` o dodatkowe możliwości formatowania.
+C++20 wprowadza bibliotekę `<ranges>`, która dostarcza nowe podejście do algorytmów:
+zamiast par iteratorów (`begin`, `end`) operujemy na **zakresach** (_ranges_) — obiektach,
+które wiedzą, gdzie zaczyna się i kończy sekwencja.
+
+Zakresy pozwalają na **leniwe komponowanie operacji** (_lazy composition_) bez tworzenia
+kontenerów pośrednich:
+
+```cpp
+#include <ranges>
+#include <vector>
+#include <iostream>
+
+std::vector<int> v = {1, 2, 3, 4, 5, 6, 7, 8};
+
+// Filtruj parzyste, pomnóż przez 2 — żadnych kopii, przetwarzanie leniwe
+for (int x : v | std::views::filter([](int n){ return n % 2 == 0; })
+               | std::views::transform([](int n){ return n * 2; }))
+{
+    std::cout << x << " "; // 4 8 12 16
+}
+```
+
+C++23 rozszerza `std::ranges` o nowe widoki i algorytmy, m.in.:
+`std::views::zip`, `std::views::enumerate`, `std::views::chunk`,
+`std::views::slide`, `std::views::join_with`, `std::ranges::fold_left`.
+
+##### `std::format` (C++20)
+
+C++20 wprowadza `<format>` — bezpieczną typowo alternatywę dla `printf` i wygodniejszą
+od budowania napisów przez `std::ostringstream`:
+
+```cpp
+#include <format>
+
+std::string s = std::format("Witaj, {}! Masz {} lat.", "Ania", 30);
+// s == "Witaj, Ania! Masz 30 lat."
+
+std::string liczba = std::format("{:.2f}", 3.14159);
+// liczba == "3.14"
+```
+
+Format jest sprawdzany **w czasie kompilacji** — błędna specyfikacja formatu
+to błąd kompilacji, a nie błąd wykonania.
+
+**C++23 rozszerza `std::format` o:**
+* `std::print` i `std::println` — bezpośrednie wypisywanie sformatowanego tekstu
+  bez `std::cout << std::format(...)`,
+* formatowanie zakresów i kontenerów (`std::vector`, `std::map` itd.) bez ręcznego iterowania,
+* formatowanie krotek i par.
+
+```cpp
+// C++23
+std::println("Wektor: {}", std::vector<int>{1, 2, 3});
+// Wypisze: Wektor: [1, 2, 3]
+```
 
 ***
 
