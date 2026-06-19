@@ -3095,26 +3095,339 @@ C++23 rozszerza:
 
 ### Mechanizmy wielowątkowe (threading facilities)
 
-Choć język C++03 miał pewne podstawy dla modelu pamięci, to **praktyczne** wsparcie dla programowania wielowątkowego pojawia się dopiero w bibliotece standardowej C++11.
+C++03 nie miał **żadnego** wbudowanego wsparcia dla wielowątkowości w standardzie języka.
+Programiści musieli korzystać z bibliotek zależnych od platformy:
+`pthreads` na systemach POSIX (Linux, macOS) lub `WinAPI` na Windows.
+Kod wielowątkowy pisany w C++03 był nieprzenośny i trudny w utrzymaniu.
 
-* Dostępna jest klasa wątku `std::thread`, która przyjmuje obiekt funkcyjny (oraz opcjonalnie argumenty) i uruchamia go w nowym wątku.
-  Można poczekać na zakończenie wątku za pomocą `std::thread::join()`.
-  Gdy to konieczne, biblioteka udostępnia dostęp do natywnego uchwytu wątku przez `std::thread::native_handle()` dla operacji specyficznych dla platformy.
+C++11 zmienia to fundamentalnie — wprowadza model pamięci dla wielu wątków
+oraz kompletną bibliotekę do programowania wielowątkowego, przenośną między platformami.
 
-* Do synchronizacji dodano odpowiednie mutexy (`std::mutex`, `std::recursive_mutex` itd.) oraz zmienne warunkowe (`std::condition_variable`, `std::condition_variable_any`).
-  Są one zaprojektowane do użycia z mechanizmami RAII, takimi jak `std::lock_guard` i `std::unique_lock`, oraz z gotowymi algorytmami blokowania.
+***
 
-* Dla wydajnych, niskopoziomowych zastosowań, gdzie chcemy komunikować się między wątkami bez narzutu mutexów, biblioteka udostępnia **operacje atomowe** na lokalizacjach pamięci.
-  Operacje atomowe mogą określać minimalne wymagania dotyczące widoczności pamięci (memory ordering).
-  Możliwe jest też użycie jawnych barier pamięci (memory barriers).
+#### Podstawowe pojęcia
 
-* Biblioteka zawiera także mechanizmy `std::future` i `std::promise` do przekazywania wyników asynchronicznych między wątkami oraz `std::packaged_task` do opakowywania wywołań funkcji generujących takie wyniki.
+##### Czym jest wątek?
 
-* Nowa funkcja `std::async` ułatwia uruchamianie zadań powiązanych z `std::future`.
-  Użytkownik może wskazać, czy zadanie ma być uruchomione asynchronicznie w osobnym wątku, czy synchronicznie w wątku wywołującym.
-  Domyślnie implementacja może wybrać strategię wykonania, co pozwala wykorzystać sprzętową równoległość bez nadmiernego tworzenia wątków.
+Program uruchomiony na komputerze wykonuje instrukcje **sekwencyjnie** — jedna po drugiej.
+Taki pojedynczy ciąg wykonania nazywa się **wątkiem** (ang. _thread_).
 
-> **Nota praktyczna:** bardziej zaawansowane, wysokopoziomowe mechanizmy (np. w pełni ustandaryzowane pule wątków) zostały pozostawione do dalszych raportów technicznych; oczekuje się, że będą one budowane na podstawie podstawowych mechanizmów wprowadzonych w C++11.
+Nowoczesne procesory mają wiele rdzeni i mogą wykonywać wiele wątków **równocześnie**.
+Wielowątkowość pozwala programowi korzystać z tej możliwości.
+
+**Przykład praktyczny — aplikacja okienkowa z pobieraniem pliku:**
+
+Wyobraź sobie aplikację z przyciskiem „Pobierz plik". Bez wielowątkowości:
+
+* użytkownik klika „Pobierz plik",
+* program zaczyna pobierać plik — **cały program się zatrzymuje**,
+* okno przestaje reagować na kliknięcia, nie można go nawet przesunąć,
+* użytkownik widzi „zamrożoną" aplikację i myśli, że się zawiesiła,
+* dopiero po zakończeniu pobierania program wraca do normalnego działania.
+
+Z wielowątkowością:
+
+* użytkownik klika „Pobierz plik",
+* program uruchamia **drugi wątek**, który pobiera plik w tle,
+* **główny wątek** nadal obsługuje interfejs — okno reaguje, można klikać inne przyciski,
+* drugi wątek po zakończeniu pobierania powiadamia główny wątek,
+* główny wątek wyświetla komunikat „Pobieranie zakończone".
+
+```cpp
+#include <thread>
+#include <iostream>
+
+void pobierzPlik(const std::string& url)
+{
+    // ... logika pobierania pliku ...
+    std::cout << "Pobieranie zakończone: " << url << "\n";
+}
+
+void aplikacja()
+{
+    std::string url = "https://przyklad.pl/plik.zip";
+
+    // Uruchamia pobieranie w osobnym wątku — główny wątek nie czeka
+    std::thread watek(pobierzPlik, url);
+    watek.detach(); // wątek działa w tle niezależnie
+
+    // Główny wątek nadal obsługuje interfejs użytkownika
+    // ...
+}
+```
+
+Inne typowe zastosowania wielowątkowości:
+
+* **renderowanie grafiki** — jeden wątek liczy fizykę, drugi rysuje obraz,
+* **serwer sieciowy** — każde połączenie obsługiwane w osobnym wątku,
+* **przetwarzanie danych** — duży zbiór danych dzielony między wątki
+  i przetwarzany równolegle na wielu rdzeniach procesora.
+
+##### Wyścig danych (data race)
+
+Gdy wiele wątków jednocześnie korzysta z tych samych danych, może dojść do **wyścigu danych**
+(ang. _data race_) — sytuacji, w której co najmniej dwa wątki jednocześnie próbują odczytać
+lub zmodyfikować tę samą zmienną, a co najmniej jeden z nich ją modyfikuje.
+
+Wyścig danych to **niezdefiniowane zachowanie** w C++ — program może działać pozornie
+poprawnie, dawać błędne wyniki, lub zawieszać się w trudny do przewidzenia sposób.
+
+Przykład wyścigu danych:
+
+```cpp
+int licznik = 0;
+
+// Wątek A i wątek B wykonują jednocześnie:
+licznik++; // to NIE jest operacja atomowa — składa się z odczytu, dodania i zapisu
+```
+
+Jeśli oba wątki odczytają `licznik` w tym samym momencie (np. wartość `5`),
+oba dodadzą `1` i oba zapiszą `6` — zamiast oczekiwanego `7`.
+To klasyczny przykład wyścigu danych.
+
+##### Mutex i sekcja krytyczna
+
+Rozwiązaniem jest **mutex** (ang. _mutual exclusion_ — wzajemne wykluczanie).
+Mutex to obiekt synchronizacyjny, który gwarantuje, że w danym momencie
+**tylko jeden wątek** może wykonywać wybrany fragment kodu.
+
+Ten chroniony fragment kodu nazywa się **sekcją krytyczną**.
+
+Zasada działania:
+
+* wątek **blokuje** (_lock_) mutex przed wejściem do sekcji krytycznej,
+* jeśli mutex jest już zablokowany przez inny wątek — wątek **czeka**,
+* po zakończeniu sekcji krytycznej wątek **zwalnia** (_unlock_) mutex,
+* dopiero wtedy inny czekający wątek może wejść do sekcji krytycznej.
+
+##### Zakleszczenie (deadlock)
+
+**Zakleszczenie** (ang. _deadlock_) to sytuacja, w której dwa lub więcej wątków
+czeka na siebie nawzajem — każdy trzyma zasób, którego potrzebuje drugi.
+
+Klasyczny przykład:
+
+```cpp
+// Wątek A: blokuje m1, potem czeka na m2
+// Wątek B: blokuje m2, potem czeka na m1
+// → oba wątki czekają w nieskończoność
+```
+
+Unikanie zakleszczeń to jeden z najtrudniejszych problemów programowania wielowątkowego.
+
+***
+
+#### `std::thread` — tworzenie i zarządzanie wątkami
+
+`std::thread` to klasa reprezentująca wątek wykonania.
+Przyjmuje obiekt funkcyjny (funkcję, lambdę, funktor) i opcjonalnie argumenty,
+a następnie uruchamia go w nowym wątku.
+
+```cpp
+#include <thread>
+#include <iostream>
+
+void zadanie(int numer)
+{
+    std::cout << "Wątek " << numer << " działa\n";
+}
+
+int main()
+{
+    std::thread watek1(zadanie, 1); // uruchamia zadanie(1) w nowym wątku
+    std::thread watek2(zadanie, 2); // uruchamia zadanie(2) w nowym wątku
+
+    watek1.join(); // czeka na zakończenie wątku 1
+    watek2.join(); // czeka na zakończenie wątku 2
+
+    // Program kończy się dopiero po zakończeniu obu wątków
+}
+```
+
+**`join()`** — wątek wywołujący czeka, aż dany wątek zakończy pracę.
+Jeśli obiekt `std::thread` zostanie zniszczony bez wywołania `join()`
+lub `detach()`, program wywołuje `std::terminate()`.
+
+**`detach()`** — odłącza wątek; działa w tle niezależnie od obiektu `std::thread`.
+Po `detach()` nie można już czekać na zakończenie wątku.
+
+Gdy potrzebny jest dostęp do mechanizmów specyficznych dla platformy
+(np. ustawienie priorytetu wątku), `std::thread::native_handle()` zwraca
+natywny uchwyt wątku (np. `pthread_t` na POSIX).
+
+***
+
+#### `std::mutex` i `std::lock_guard` — podstawowa synchronizacja
+
+`std::mutex` to podstawowy mutex w C++11.
+
+Bezpieczne użycie mutexa opiera się na zasadzie **RAII** — zamiast ręcznie
+wywoływać `lock()` i `unlock()`, używamy obiektów blokujących,
+które zwalniają mutex automatycznie przy wyjściu z zakresu
+(nawet jeśli wyjście następuje przez wyjątek).
+
+`std::lock_guard` to najprostszy taki obiekt — blokuje mutex w konstruktorze
+i zwalnia w destruktorze:
+
+```cpp
+#include <mutex>
+#include <thread>
+
+int licznik = 0;
+std::mutex mutexLicznika;
+
+void zwieksz()
+{
+    std::lock_guard<std::mutex> blokada(mutexLicznika); // blokuje mutex
+    licznik++; // sekcja krytyczna — tylko jeden wątek naraz
+} // blokada zwolniona automatycznie
+
+int main()
+{
+    std::thread w1(zwieksz);
+    std::thread w2(zwieksz);
+
+    w1.join();
+    w2.join();
+
+    // licznik == 2, gwarantowane
+}
+```
+
+`std::unique_lock` to bardziej elastyczna wersja `std::lock_guard`:
+pozwala na ręczne zwalnianie i ponowne blokowanie mutexa,
+odroczenie blokowania oraz próbę blokowania bez czekania (`try_lock`).
+Jest wymagany przez zmienne warunkowe.
+
+Dostępne są też inne warianty mutexa:
+
+* `std::recursive_mutex` — pozwala temu samemu wątkowi zablokować mutex wielokrotnie,
+* `std::timed_mutex` — pozwala na próbę blokowania z timeoutem (`try_lock_for`, `try_lock_until`),
+* `std::recursive_timed_mutex` — łączy obie powyższe właściwości.
+
+***
+
+#### Zmienne warunkowe — oczekiwanie na zdarzenie
+
+`std::condition_variable` pozwala wątkowi **czekać** na spełnienie warunku,
+zamiast aktywnie sprawdzać go w pętli (co marnuje czas procesora).
+
+Typowy wzorzec producent–konsument:
+
+```cpp
+#include <condition_variable>
+#include <mutex>
+#include <queue>
+
+std::queue<int> kolejka;
+std::mutex m;
+std::condition_variable cv;
+
+// Producent — dodaje dane i powiadamia konsumenta
+void producent()
+{
+    {
+        std::lock_guard<std::mutex> blokada(m);
+        kolejka.push(42);
+    }
+    cv.notify_one(); // budzi jeden czekający wątek
+}
+
+// Konsument — czeka na dane
+void konsument()
+{
+    std::unique_lock<std::mutex> blokada(m);
+    cv.wait(blokada, [] { return !kolejka.empty(); }); // czeka aż kolejka nie będzie pusta
+    int wartosc = kolejka.front();
+    kolejka.pop();
+}
+```
+
+`std::condition_variable_any` działa z dowolnym typem blokady
+(nie tylko z `std::unique_lock<std::mutex>`).
+
+***
+
+#### Operacje atomowe — synchronizacja bez mutexa
+
+Dla prostych operacji na pojedynczych zmiennych mutex bywa nadmiarowy.
+C++11 wprowadza **operacje atomowe** — operacje gwarantowane jako niepodzielne,
+wykonywane jako całość bez możliwości przerwania przez inny wątek.
+
+```cpp
+#include <atomic>
+
+std::atomic<int> licznik(0);
+
+void zwieksz()
+{
+    licznik++; // atomowe — bezpieczne bez mutexa
+}
+```
+
+`std::atomic<T>` działa dla typów całkowitych, wskaźników i `bool`.
+Dla bardziej złożonych typów nadal potrzebny jest mutex.
+
+Operacje atomowe pozwalają też określić **wymagania widoczności pamięci**
+(ang. _memory ordering_) — czyli gwarancje co do kolejności, w jakiej zmiany
+w pamięci stają się widoczne dla innych wątków. Domyślne `memory_order_seq_cst`
+daje najsilniejsze gwarancje i jest bezpieczne w typowym użyciu.
+
+***
+
+#### `std::future`, `std::promise`, `std::async` — wyniki asynchroniczne
+
+Często chcemy uruchomić zadanie w tle i później pobrać jego wynik.
+
+`std::async` to najprostszy sposób:
+
+```cpp
+#include <future>
+#include <iostream>
+
+int oblicz()
+{
+    return 6 * 7;
+}
+
+int main()
+{
+    // Uruchamia oblicz() asynchronicznie (potencjalnie w nowym wątku)
+    std::future<int> wynik = std::async(std::launch::async, oblicz);
+
+    // ... można tu robić inne rzeczy ...
+
+    std::cout << wynik.get() << "\n"; // czeka na wynik i go pobiera
+}
+```
+
+`std::future<T>` reprezentuje wartość, która będzie dostępna w przyszłości.
+`get()` blokuje wątek wywołujący, dopóki wynik nie jest gotowy.
+
+`std::promise<T>` i `std::future<T>` pozwalają na ręczne przekazywanie
+wartości między wątkami:
+
+```cpp
+std::promise<int> obietnica;
+std::future<int> wynik = obietnica.get_future();
+
+std::thread watek([&obietnica]()
+{
+    obietnica.set_value(42); // przekazuje wynik do future
+});
+
+std::cout << wynik.get() << "\n"; // odbiera wynik
+watek.join();
+```
+
+`std::packaged_task<T>` opakowuje obiekt funkcyjny tak, aby jego wynik
+był dostępny przez `std::future`. Przydatne przy budowaniu kolejek zadań.
+
+> **Nota praktyczna:** bardziej zaawansowane mechanizmy wysokopoziomowe
+> (np. pule wątków) nie zostały ustandaryzowane w C++11.
+> Oczekuje się, że będą budowane na podstawie tych podstawowych mechanizmów.
+
+***
 
 #### Uzupełnienie (C++14): drobne poprawki
 
