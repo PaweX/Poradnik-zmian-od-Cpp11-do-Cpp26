@@ -3069,19 +3069,95 @@ std::cout << std::quoted("ala ma kota");
 
 #### (C++17): ulepszenia alokatorów i kontenerów
 
-C++17 wprowadza m.in.:
+**Polymorphic memory resources (`std::pmr`)**
 
-* `std::pmr::*` — **polymorphic memory resources**, nowy model zarządzania pamięcią,
-* ulepszenia w kontenerach, np. `try_emplace`, `insert_or_assign` w mapach,
-* możliwość używania `constexpr` w większej liczbie funkcji bibliotecznych.
+C++17 wprowadza nowy model zarządzania pamięcią w nagłówku `<memory_resource>`:
+**polimorficzne zasoby pamięci** (`std::pmr::*`).
+
+Problem, który rozwiązują: w C++11/14 alokatory były częścią **typu** kontenera
+(`std::vector<int, MojAlokator>`). Oznaczało to, że `std::vector<int>` i
+`std::vector<int, MojAlokator>` to **dwa różne typy** — niemożliwe do przekazania
+do tej samej funkcji bez szablonów.
+
+`std::pmr` oddziela alokator od typu kontenera. Kontener zapamiętuje wskaźnik
+do `std::pmr::memory_resource` (interfejs polimorficzny), a nie typ alokatora:
+
+```cpp
+#include <memory_resource>
+#include <vector>
+
+// Bufor na stosie — żadnych alokacji na stercie
+std::byte bufor[1024];
+std::pmr::monotonic_buffer_resource zasob(bufor, sizeof(bufor));
+
+// Wektor używający pamięci ze stosu — ale jego typ to nadal std::pmr::vector<int>
+std::pmr::vector<int> v(&zasob);
+v.push_back(1);
+v.push_back(2);
+```
+
+`std::pmr::vector<T>` to alias dla `std::vector<T, std::pmr::polymorphic_allocator<T>>`.
+Możemy przekazywać takie kontenery do funkcji przyjmujących `std::pmr::vector<int>`
+niezależnie od tego, jaki zasób pamięci jest aktualnie używany.
+
+Dostępne standardowe zasoby pamięci:
+
+* `std::pmr::monotonic_buffer_resource` — szybka alokacja z bufora, bez możliwości
+  zwalniania pojedynczych obiektów (wszystko zwalniane naraz),
+* `std::pmr::unsynchronized_pool_resource` — pula pamięci bez synchronizacji wątków,
+* `std::pmr::synchronized_pool_resource` — pula pamięci bezpieczna wątkowo,
+* `std::pmr::null_memory_resource()` — zawsze rzuca `std::bad_alloc`
+  (przydatne do testowania, czy kontener nie alokuje nieoczekiwanie).
+
+##### Nowe operacje na mapach: `try_emplace` i `insert_or_assign`
+
+C++17 dodaje do `std::map` i `std::unordered_map` dwie nowe metody:
+
+`try_emplace` — wstawia element **tylko jeśli klucz nie istnieje**,
+konstruując wartość bezpośrednio w miejscu (bez zbędnych kopii ani przeniesień
+w przypadku, gdy klucz już istnieje):
+
+```cpp
+std::map<std::string, std::vector<int>> m;
+
+// Jeśli "klucz" nie istnieje — konstruuje vector w miejscu
+// Jeśli "klucz" istnieje — nic nie robi, nie niszczy argumentów
+m.try_emplace("klucz", std::initializer_list<int>{1, 2, 3});
+```
+
+Przed C++17 używano `insert` lub `emplace`, które mogły konstruować obiekt wartości
+nawet jeśli klucz już istniał, a następnie go niszczyć.
+
+`insert_or_assign` — wstawia element jeśli klucz nie istnieje,
+lub **nadpisuje wartość** jeśli klucz istnieje. Zwraca parę
+`{iterator, bool}` (podobnie jak `insert`), gdzie `bool` oznacza
+czy nastąpiło wstawienie (`true`) czy nadpisanie (`false`):
+
+```cpp
+auto [it, wstawiono] = m.insert_or_assign("klucz", nowaWartosc);
+```
+
+Przed C++17 osiągano ten efekt przez `operator[]`, ale `operator[]`
+wymaga, żeby typ wartości miał konstruktor domyślny — `insert_or_assign` nie ma tego wymagania.
 
 ##### Uzupełnienie (C++20): kontenery i algorytmy constexpr
 
 C++20 pozwala używać wielu kontenerów i algorytmów w kontekście `constexpr`, np.:
 
 ```cpp
-constexpr std::vector<int> v = {1, 2, 3};
+constexpr auto suma = []() {
+    std::vector<int> v = {1, 2, 3};
+    int s = 0;
+    for (int x : v) s += x;
+    return s;
+}();
+// suma == 6, obliczone w czasie kompilacji
 ```
+
+Dotyczy to m.in. `std::vector`, `std::string`, `std::array` oraz większości algorytmów
+z `<algorithm>` — pod warunkiem, że nie wykonują operacji niedozwolonych w `constexpr`
+(np. operacji na plikach czy wątkach).
+
 ***
 
 #### (C++23): rozszerzenia `ranges` i `format`
@@ -3431,11 +3507,35 @@ był dostępny przez `std::future`. Przydatne przy budowaniu kolejek zadań.
 
 #### Uzupełnienie (C++14): drobne poprawki
 
-C++14 wprowadza:
+C++14 nie wprowadza dużych zmian w mechanizmach wielowątkowych, ale przynosi
+kilka praktycznych ulepszeń:
 
-* ulepszenia w `std::future` i `std::promise`,
-* poprawki w `std::async` dotyczące harmonogramowania,
-* **`std::shared_timed_mutex` — mutex współdzielony z obsługą timeoutów (`try_lock_for`, `try_lock_until`)**.
+* Doprecyzowano zachowanie destruktora `std::future` zwróconego przez `std::async`.
+  W C++11 było niezdefiniowane, czy zniszczenie takiego `std::future` blokuje wątek
+  czy nie. Prowadziło to do subtelnego błędu:
+
+```cpp
+  std::async(std::launch::async, zadanie); // wynik ignorowany — tymczasowy future
+                                           // natychmiast zniszczony
+```
+
+  Tymczasowy obiekt `std::future` jest tu tworzony i od razu niszczony —
+  w C++11 niektóre implementacje nie czekały wtedy na zakończenie wątku,
+  co mogło prowadzić do niezdefiniowanego zachowania.
+  C++14 precyzuje: destruktor `std::future` zwróconego przez `std::async`
+  **zawsze blokuje** aż wątek zakończy pracę.
+
+  Aby uniknąć tego problemu, zawsze przechowuj wynik `std::async`:
+
+```cpp
+  auto wynik = std::async(std::launch::async, zadanie); // poprawnie
+```
+
+* Dodano **`std::shared_timed_mutex`** — mutex obsługujący wielu czytających
+  i jednego zapisującego (tak samo jak `std::shared_mutex` z C++17),
+  ale dodatkowo z obsługą timeoutów (`try_lock_for`, `try_lock_until`).
+  Pozwala to na próbę zablokowania mutexa przez określony czas,
+  zamiast czekania w nieskończoność.
 
 > **Nota:** `std::shared_timed_mutex` zostało wprowadzone w C++14, ale od C++17 preferowanym, lżejszym odpowiednikiem jest `std::shared_mutex`.
 >`shared_timed_mutex` pozostaje częścią biblioteki i nie jest oznaczone jako przestarzałe.
@@ -3519,20 +3619,93 @@ Dla jednego mutexa zachowuje się identycznie jak `std::lock_guard`.
 
 ***
 
-#### Uzupełnienie (C++20): `std::jthread` i stop tokens
+#### (C++20): `std::jthread` i stop tokens
 
-C++20 wprowadza:
+##### `std::jthread` — wątek z automatycznym `join()`
 
-* `std::jthread` — wątek automatycznie dołączany (RAII),
-* `std::stop_token`, `std::stop_source` — ustandaryzowane anulowanie wątków,
-* `std::latch`, `std::barrier`, `std::semaphore`.
+`std::thread` wymaga jawnego wywołania `join()` lub `detach()` przed zniszczeniem
+obiektu — pominięcie tego powoduje wywołanie `std::terminate()`.
+Jest to częste źródło błędów, szczególnie gdy wyjątek przerwie normalny przepływ programu.
+
+`std::jthread` rozwiązuje ten problem: automatycznie wywołuje `join()` w destruktorze
+(analogicznie do RAII w blokadach mutexów):
+
+```cpp
+#include <thread>
+
+void zadanie() { /* ... */ }
+
+int main()
+{
+    std::jthread watek(zadanie);
+    // watek.join() wywołane automatycznie na końcu zakresu
+    // nawet jeśli wystąpi wyjątek
+}
+```
+
+##### Stop tokens — ustandaryzowane anulowanie wątków
+
+Przed C++20 nie było standardowego sposobu na poproszenie wątku o zakończenie pracy.
+Programiści używali zmiennych atomowych lub flag — każdy na swój sposób.
+
+C++20 wprowadza ustandaryzowany mechanizm:
+
+* `std::stop_source` — źródło sygnału zatrzymania; wywołanie `request_stop()`
+  wysyła żądanie zatrzymania,
+* `std::stop_token` — token przekazywany do wątku; wątek sprawdza
+  `token.stop_requested()` i kończy pracę gdy to konieczne.
+
+`std::jthread` automatycznie przekazuje `std::stop_token` do funkcji wątku,
+jeśli ta go przyjmuje:
+
+```cpp
+#include <thread>
+#include <chrono>
+
+void zadanie(std::stop_token token)
+{
+    while (!token.stop_requested())
+    {
+        // wykonuj pracę...
+    }
+    // wątek kończy się grzecznie po otrzymaniu żądania zatrzymania
+}
+
+int main()
+{
+    std::jthread watek(zadanie);
+    // ... po jakimś czasie ...
+    watek.request_stop(); // wysyła żądanie zatrzymania
+    // destruktor jthread czeka na zakończenie wątku
+}
+```
+
+##### Nowe prymitywy synchronizacji
+
+* `std::latch` — jednorazowa bariera: wątki czekają, aż licznik spadnie do zera,
+  po czym bariera otwiera się na stałe. Przydatna do synchronizacji startu
+  grupy wątków lub oczekiwania na zakończenie zestawu zadań.
+
+* `std::barrier` — bariera wielokrotnego użytku: wszystkie wątki czekają
+  aż każdy z nich dotrze do punktu synchronizacji, po czym wszystkie ruszają dalej.
+  Przydatna w algorytmach iteracyjnych, gdzie każda iteracja musi być
+  ukończona przez wszystkie wątki przed rozpoczęciem następnej.
+
+* `std::semaphore` — uogólniony licznik dostępu: pozwala ograniczyć liczbę wątków
+  mogących jednocześnie wykonywać dany fragment kodu.
+  `std::binary_semaphore` to uproszczona wersja dla wartości 0/1.
 
 #### Uzupełnienie (C++23): ulepszenia atomików i futures
 
-C++23 rozszerza:
+C++23 wprowadza drobne rozszerzenia w obszarze wielowątkowości:
 
-* `std::atomic` o nowe operacje,
-* `std::future` o lepszą integrację z `std::stop_token`.
+* `std::atomic` zyskuje operacje `wait()`, `notify_one()` i `notify_all()`,
+  pozwalające wątkowi czekać na zmianę wartości atomowej bez mutexa
+  i zmiennej warunkowej — prostszy i wydajniejszy alternatywny wzorzec
+  dla prostych przypadków synchronizacji.
+
+* Poprawiono integrację `std::future` z `std::stop_token` z C++20,
+  umożliwiając bardziej spójne anulowanie zadań asynchronicznych.
 
 ***
 
