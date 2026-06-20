@@ -954,6 +954,25 @@ Typ `jakisWywolywalnyTyp` jest dokładnie tym, co zwraca odpowiednia instancja `
 > W języku **B** (poprzedniku C) słowo `auto` oznaczało _zmienną automatyczną_ (lokalną).
 > C++11 **zmienia jego znaczenie** — teraz służy do _wnioskowania typu_.
 
+###### Uzupełnienie (C++17): nowe reguły dedukcji `auto` z listy inicjalizacyjnej
+
+W C++11/14 zapis:
+
+```cpp
+auto x = {1, 2, 3};
+```
+
+dedukowało typ `std::initializer_list<int>`, co było zaskakujące i prowadziło do błędów.
+C++17 rozdziela dwa przypadki:
+
+```cpp
+auto a = {1, 2, 3};  // nadal std::initializer_list<int>
+auto b{1};           // teraz int (nie initializer_list<int>)
+auto c{1, 2};        // błąd kompilacji — niedozwolone od C++17
+```
+
+Czyli `auto x{val}` od C++17 deduuje typ bezpośrednio jak `val`, a nie jako listę jednoelementową.
+
 ***
 
 ##### `decltype`
@@ -1279,6 +1298,36 @@ Dzięki temu:
 
 Mechanizm ten jest kluczowy dla nowoczesnego stylu programowania funkcyjnego w C++ i stanowi fundament dla późniejszych rozszerzeń (np. init‑captures w structured bindings).
 
+###### Uzupełnienie (C++17): przechwytywanie `*this` przez wartość
+
+W C++11/14 lambda mogła przechwycić `this` (wskaźnik do obiektu), ale nie mogła
+przechwycić **kopii całego obiektu**. Przy pracy asynchronicznej było to ryzykowne
+— jeśli obiekt został zniszczony przed wykonaniem lambdy, wskaźnik `this` stawał się
+nieprawidłowy.
+
+C++17 dodaje składnię `[*this]`, która przechwytuje **kopię całego obiektu**:
+
+```cpp
+struct Zadanie
+{
+    int wartosc = 42;
+
+    auto przygotuj()
+    {
+        return [*this]()     // kopia całego obiektu Zadanie
+        {
+            return wartosc;  // bezpieczne — używa kopii, nie wskaźnika
+        };
+    }
+};
+
+Zadanie z;
+auto lambda = z.przygotuj();
+// z może być zniszczone — lambda nadal działa poprawnie
+```
+
+Przed C++17 jedynym sposobem było ręczne kopiowanie potrzebnych pól przez
+wyrażenia przechwytywania (`[wartosc = this->wartosc]`).
 ***
 
 #### Alternatywna składnia funkcji (trailing return type — typ zwracany po parametrze)
@@ -1964,6 +2013,112 @@ To elegancko rozwiązuje problem **safe bool**.
 
 ***
 
+#### `noexcept` — specyfikacja i operator braku wyjątków
+
+W C++03 istniał mechanizm **dynamicznych specyfikacji wyjątków** (`throw(...)`),
+pozwalający deklarować, jakie wyjątki funkcja może rzucić:
+
+```cpp
+void funkcja() throw(std::runtime_error); // może rzucić tylko runtime_error
+void inna()    throw();                   // nie rzuca żadnych wyjątków
+```
+
+W praktyce mechanizm ten okazał się nieudany:
+
+* sprawdzanie odbywało się **w czasie wykonywania**, nie kompilacji,
+* naruszenie specyfikacji powodowało wywołanie `std::unexpected()`, a nie błąd kompilacji,
+* kompilatory nie mogły na tej podstawie robić optymalizacji,
+* kod obsługi był kosztowny nawet gdy wyjątki nie były rzucane.
+
+C++11 zastępuje go słowem kluczowym `noexcept`.
+
+***
+
+##### `noexcept` jako specyfikator
+
+Oznacza, że funkcja **nie rzuca wyjątków**:
+
+```cpp
+void funkcja() noexcept;          // nie rzuca wyjątków
+void inna()    noexcept(true);    // równoważne — nie rzuca
+void jeszcze() noexcept(false);   // może rzucać (domyślne zachowanie)
+```
+
+Jeśli funkcja oznaczona `noexcept` rzuci wyjątek, program wywołuje `std::terminate()`
+natychmiast — bez rozwijania stosu. To gwarancja silniejsza niż w C++03.
+
+Kompilator może wykorzystać `noexcept` do **optymalizacji** — np. `std::vector`
+użyje konstruktora przenoszącego zamiast kopiującego tylko wtedy, gdy przenoszenie
+jest `noexcept`. Bez tej gwarancji musi kopiować, żeby zachować silną gwarancję wyjątków
+przy realokacji.
+
+Dlatego konstruktory przenoszące i operatory przenoszące powinny być oznaczone `noexcept`
+wszędzie tam, gdzie to możliwe:
+
+```cpp
+class Bufor
+{
+    int* dane;
+    std::size_t rozmiar;
+
+public:
+    Bufor(Bufor&& inny) noexcept  // bez noexcept vector będzie kopiował zamiast przenosić
+        : dane(inny.dane), rozmiar(inny.rozmiar)
+    {
+        inny.dane = nullptr;
+        inny.rozmiar = 0;
+    }
+};
+```
+
+***
+
+##### `noexcept` jako operator
+
+`noexcept(wyrażenie)` użyte jako **operator** (nie specyfikator) zwraca `bool`
+w czasie kompilacji — `true` jeśli wyrażenie nie może rzucić wyjątku:
+
+```cpp
+int x = 5;
+constexpr bool a = noexcept(x + 1);      // true — dodawanie int nie rzuca
+constexpr bool b = noexcept(new int(1)); // false — new może rzucić bad_alloc
+```
+
+Pozwala to warunkowo oznaczać funkcje jako `noexcept` na podstawie właściwości
+używanych przez nie typów:
+
+```cpp
+template <typename T>
+void zamien(T& a, T& b) noexcept(noexcept(T(std::move(a))))
+{
+    T tmp = std::move(a);
+    a = std::move(b);
+    b = std::move(tmp);
+}
+```
+
+Funkcja `zamien` jest `noexcept` dokładnie wtedy, gdy przenoszenie `T` jest `noexcept`.
+
+***
+
+##### Uzupełnienie (C++17): `noexcept` jako część typu funkcji
+
+Od C++17 `noexcept` jest częścią **typu** funkcji, a nie tylko jej deklaracji.
+Wskaźnik do funkcji `noexcept` i wskaźnik do zwykłej funkcji to różne typy:
+
+```cpp
+void f() noexcept;
+void g();
+
+void (*pf)() noexcept = &f; // OK
+void (*pg)() noexcept = &g; // błąd — g() nie jest noexcept
+```
+
+Przed C++17 obie deklaracje miały ten sam typ wskaźnika, co uniemożliwiało
+kompilatorowi i narzędziom statycznej analizy dokładniejsze sprawdzanie gwarancji wyjątków.
+
+***
+
 #### Aliasowanie szablonów (template aliases)
 
 W C++03 można było tworzyć `typedef`, ale tylko jako alias **konkretnego typu**, np.:
@@ -2168,7 +2323,77 @@ To jedna z najważniejszych zmian w C++11, która ogromnie ułatwiła pisanie el
 - Umożliwia tworzenie bardzo elastycznych bibliotek (np. `std::tuple`, `std::make_shared`, `std::thread`, formatowanie tekstu itp.).
 - Działa zarówno dla funkcji, jak i dla klas szablonowych (`std::tuple<int, double, std::string>` to właśnie szablon wariadyczny).
 
-W praktyce w C++11 najczęściej spotykasz je w formie rekurencyjnej (jak powyżej) – to podstawowy wzorzec, który warto zrozumieć na początku.
+W praktyce w C++11 najczęściej spotykasz je w **formie rekurencyjnej** (jak powyżej), czyli takiej, w której funkcja szablonowa wywołuje samą siebie, stopniowo rozpakowując parameter pack — to podstawowy wzorzec, który warto zrozumieć na początku.
+
+Przykład:
+```cpp
+// Przypadek bazowy: funkcja przyjmuje tylko JEDEN argument.
+// Gdy rekurencja "zje" wszystkie pozostałe parametry, trafiamy tutaj.
+template<typename T>
+void print(const T& t)
+{
+    std::cout << t << "\n";   // wypisz ostatni element i zakończ
+}
+
+// Wersja rekurencyjna: funkcja przyjmuje CO NAJMNIEJ dwa argumenty.
+// T = pierwszy argument
+// Ts... = pozostałe argumenty (parameter pack)
+template<typename T, typename... Ts>
+void print(const T& t, const Ts&... ts)
+{
+    std::cout << t << "\n";   // wypisz pierwszy element
+
+    // Wywołanie rekurencyjne:
+    // - pierwszy element został wypisany,
+    // - więc przekazujemy dalej TYLKO pozostałe argumenty (ts...)
+    //
+    // Za każdym wywołaniem parameter pack staje się coraz krótszy:
+    //   print(1, 2, 3)
+    //     → print(2, 3)
+    //         → print(3)
+    //             → przypadek bazowy
+    
+    print(ts...); // rekurencja na reszcie
+```
+***
+
+##### Uzupełnienie (C++17): wyrażenia składane (fold expressions)
+
+W C++11/14 rozwijanie paczki parametrów wymagało rekurencji szablonów
+(jak w przykładzie z `print` powyżej). C++17 wprowadza **wyrażenia fold**,
+które pozwalają zastosować operator do całej paczki bez rekurencji:
+
+```cpp
+template <typename... Args>
+auto suma(Args... args)
+{
+    return (args + ...); // fold po operatorze +
+}
+
+suma(1, 2, 3, 4); // 10
+```
+
+Cztery formy wyrażeń fold (`op` to dowolny operator binarny, `e` to wartość początkowa):
+
+* `(pack op ...)` — prawostronne fold bez wartości początkowej,
+* `(... op pack)` — lewostronne fold bez wartości początkowej,
+* `(pack op ... op e)` — prawostronne fold z wartością początkową,
+* `(e op ... op pack)` — lewostronne fold z wartością początkową.
+
+Przykład z wartością początkową (bezpieczny dla pustej paczki):
+
+```cpp
+template <typename... Args>
+auto suma(Args... args)
+{
+    return (0 + ... + args); // lewostronne fold, wartość początkowa 0
+}
+
+suma(); // 0 — działa dla pustej paczki
+```
+
+Wyrażenia fold eliminują potrzebę pisania przypadku bazowego dla wielu
+prostych operacji na paczkach parametrów.
 
 ***
 
@@ -2207,7 +2432,6 @@ Dodatkowo:
 ***
 
 Tworzenie literałów napisowych dla każdego kodowania:
-
 ```cpp
 u8"Jestem napisem UTF-8."
 u"To jest napis UTF-16."
@@ -2239,10 +2463,45 @@ Zasady:
 
 ***
 
+##### Uzupełnienie (C++17): literały znakowe UTF-8
+
+C++11 wprowadził literały napisowe UTF-8 (`u8"..."`), ale nie miał odpowiednika
+dla pojedynczych znaków. C++17 dodaje literały znakowe UTF-8:
+
+```cpp
+char c = u8'a'; // znak ASCII / Basic Latin w kodowaniu UTF-8
+```
+
+Ze względu na to, że `char` ma jeden bajt, literały `u8'x'` mogą przechowywać
+wyłącznie znaki z zakresu **Basic Latin** (ASCII, U+0000–U+007F) oraz kody sterujące C0.
+Próba użycia znaku spoza tego zakresu jest błędem kompilacji.
+
+Głównym celem jest spójność z literałami napisowymi: skoro istnieje `u8"tekst"`,
+powinno istnieć też `u8'x'`.
+***
+##### Uzupełnienie (C++17): szestnastkowe literały zmiennoprzecinkowe
+
+C++17 dodaje możliwość zapisu liczb zmiennoprzecinkowych w systemie szesnastkowym,
+analogicznie do składni z języka C99:
+```cpp
+double d = 0x1.8p+1; // 1.5 × 2¹ = 3.0
+float  f = 0x0.4p-2; // 0.25 × 2⁻² = 0.0625
+```
+
+Format: `0x<mantysa_hex>p<wykładnik_dziesiętny>`, gdzie:
+
+* `p` oddziela mantysę od wykładnika (potęga dwójki, nie dziesiątki),
+* wykładnik jest zawsze dziesiętny i obowiązkowy.
+
+Zalety: zapis heksadecymalny (szestnastkowy) pozwala zapisać dokładną reprezentację binarną
+liczby zmiennoprzecinkowej bez zaokrągleń wynikających z konwersji dziesiętno-binarnej.
+Przydatne w kodzie niskopoziomowym i przy pracy z IEEE 754.
+
+***
+
 ##### Surowe literały napisowe (raw string literals)
 
 C++11 dodaje surowe literały napisowe:
-
 ```cpp
 R"(Dane napisu \ Różne rzeczy " )"
 R"delimiter(Dane napisu \ Różne rzeczy " )delimiter"
@@ -2252,7 +2511,7 @@ Zasady:
 
 * wszystko między `"( ... )"` jest częścią napisu,
 
-* znaki `"` i `\` **nie wymagają uciekania**,
+* znaki `"` i `\` **nie wymagają uciekania** („Uciekanie” ang. _escaping_ - to poprzedzenie znaku backslashem '\\', aby kompilator nie potraktował go jako elementu składni),
 
 * w wersji z delimiterem:
 
@@ -2263,20 +2522,17 @@ Zasady:
   * dzięki delimiterowi można mieć w napisie sekwencję `)"`.
 
 Przykład z oryginału:
-
 ```cpp
 R"delimiter("(a-z)")delimiter"
 ```
 
 jest równoważne:
-
 ```cpp
 "\"(a-z)\""
 ```
 ***
 
 Surowe literały można łączyć z Unicode:
-
 ```cpp
 u8R"XXX(Jestem „surowym UTF-8” napisem.)XXX"
 uR"*(To jest „surowy UTF-16” napis.)*"
@@ -2884,6 +3140,24 @@ void test()
 
 Atrybut ten pozwala stopniowo wycofywać stare API, jednocześnie zachowując kompatybilność wsteczną.
 
+C++17 rozszerza też **miejsca**, w których można stosować atrybuty — od tej wersji wolno umieszczać je przy **przestrzeniach nazw** oraz **elementach wyliczenia**:
+
+```cpp
+namespace [[deprecated]] stareApi
+{
+    void funkcja();
+}
+
+enum class Kolor
+{
+    Czerwony,
+    Zielony [[deprecated]],  // konkretny element wyliczenia (iterator) oznaczony jako przestarzały
+    Niebieski
+};
+```
+
+Przed C++17 atrybuty przy przestrzeniach nazw i elementach wyliczenia były niedozwolone lub zależne od kompilatora.
+
 ##### **Uzupełnienie (C++17): atrybuty `[[fallthrough]]`, `[[nodiscard]]`, `[[maybe_unused]]`**
 
 C++17 dodaje trzy ważne atrybuty:
@@ -3027,6 +3301,29 @@ Dodano stałe i odwrotne iteratory w formie funkcji globalnych:
 ```cpp
 for (auto it = std::cbegin(v); it != std::cend(v); ++it) { ... }
 ```
+
+##### Uzupełnienie (C++17): `std::size`, `std::empty`, `std::data`
+
+C++17 dodaje trzy nowe funkcje globalne, analogiczne do istniejących `std::begin`/`std::end`:
+
+```cpp
+#include <iterator>
+
+int tab[] = {1, 2, 3, 4, 5};
+std::vector<int> v = {1, 2, 3};
+
+std::size(tab);   // 5 — liczba elementów tablicy lub kontenera
+std::size(v);     // 3
+
+std::empty(v);    // false — czy kontener jest pusty
+std::empty(tab);  // false
+
+std::data(v);     // wskaźnik do pierwszego elementu (jak v.data())
+std::data(tab);   // wskaźnik do pierwszego elementu tablicy
+```
+
+Pozwalają pisać kod generyczny działający zarówno dla tablic C-stylowych,
+jak i kontenerów STL, bez specjalizowania szablonów dla obu przypadków.
 
 ***
 
@@ -4317,6 +4614,20 @@ Dzięki cechom typów można też wykonywać **transformacje typów** (np. usuwa
 * Wiele traitsów stało się `constexpr`.
 * Dodano `std::void_t`, kluczowy element nowoczesnego SFINAE.
 * Dodano `std::is_invocable`, `std::invoke_result`, `std::is_swappable`, `std::is_nothrow_swappable`.
+* Dodano **logiczne cechy typów**: `std::conjunction<T...>`, `std::disjunction<T...>`,
+  `std::negation<T>` — pozwalają łączyć warunki na typach operatorami logicznymi
+  bez ręcznego pisania zagnieżdżonych szablonów:
+```cpp
+  // Czy wszystkie typy są całkowite?
+  static_assert(std::conjunction_v<std::is_integral<int>,
+                                   std::is_integral<long>>);
+
+  // Czy któryś typ jest wskaźnikiem?
+  static_assert(std::disjunction_v<std::is_pointer<int*>,
+                                   std::is_pointer<int>>);
+```
+  `conjunction` i `disjunction` są **leniwe** — przestają sprawdzać kolejne typy
+  gdy wynik jest już znany (short-circuit evaluation w czasie kompilacji).
 
 **C++20**
 
@@ -4444,7 +4755,22 @@ Standard **C++11** wprowadził zestaw zmian mających na celu poprawę zgodnośc
 * `cstdint` (odpowiednik `stdint.h`),
 * `cinttypes` (odpowiednik `inttypes.h`).
 
-### **C++14 / C++17 / C++20 / C++23**
+### C++17
+
+#### Preprocesor
+
+* `__has_include(<nagłówek>)` (C++17) — pozwala sprawdzić w preprocesie,
+  czy dany nagłówek jest dostępny:
+```cpp
+  #if __has_include(<optional>)
+  #  include <optional>
+  #else
+  #  include "my_optional.h"
+  #endif
+```
+  Przydatne przy pisaniu kodu przenośnego między kompilatorami i standardami.
+
+### C++14 / C++20 / C++23
 
 Brak zmian — żadna z późniejszych wersji standardu nie rozszerzała ani nie modyfikowała tej sekcji.
 
@@ -4496,6 +4822,11 @@ C++17 usuwa większość elementów oznaczonych jako przestarzałe w C++11:
 * Bindery (`bind1st`, `bind2nd`) — **usunięte**.
 
 * Słowo kluczowe `register` — **usunięte** jako specyfikator klasy przechowywania.
+
+* **Trygrafy** — trzyznakowe sekwencje zastępujące znaki niedostępne na niektórych
+  klawiaturach (np. `??=` zamiast `#`, `??(` zamiast `[`) — zostały **usunięte**.
+  Były dziedzictwem standardu ISO 646 i praktycznie nieużywane we współczesnym kodzie.
+  Kompilatory już od dawna obsługiwały je opcjonalnie.
 
 ### C++20
 
