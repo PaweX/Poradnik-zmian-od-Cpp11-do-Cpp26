@@ -1,4 +1,4 @@
-# C++11
+# Poradnik zmian po C++03
 ## Cele projektowe C++11:
 
 **Komitet projektowy starał się trzymać kilku kluczowych założeń:**
@@ -1963,6 +1963,479 @@ vector<JakisTyp<(1>2)>> x1;
 
 ***
 
+#### (C++17): Zagnieżdżone przestrzenie nazw
+
+W C++03 i C++11 zagnieżdżone przestrzenie nazw wymagały osobnych definicji
+dla każdego poziomu:
+```cpp
+namespace Firma
+{
+    namespace Modul
+    {
+        namespace Szczegoly
+        {
+            void funkcja();
+        }
+    }
+}
+```
+
+C++17 wprowadza skróconą składnię z operatorem `::`:
+```cpp
+namespace Firma::Modul::Szczegoly
+{
+    void funkcja();
+}
+```
+
+Obie formy są równoważne. Skrócona składnia poprawia czytelność w dużych projektach,
+gdzie głęboko zagnieżdżone przestrzenie nazw są powszechne.
+
+> **Uwaga:** skrócona składnia służy wyłącznie do **definiowania** przestrzeni nazw.
+> Dostęp do elementów nadal używa `::`, np. `Firma::Modul::Szczegoly::funkcja()`.
+
+##### Uzupełnienie (C++20): **`inline`** w zagnieżdżonych przestrzeniach nazw
+
+C++20 rozszerza składnię z C++17, pozwalając używać `inline` również w skróconej formie zagnieżdżonych przestrzeni nazw:
+```cpp
+namespace Firma::inline V2::Szczegoly
+{
+    void funkcja();
+}
+```
+To zachowuje wszystkie właściwości `inline namespace` (m.in. automatyczne „eksportowanie” nazw z przestrzeni `V2`), a jednocześnie pozwala korzystać z czytelnej składni wprowadzonej w C++17.
+
+***
+
+#### (C++17): `if constexpr` — kompilacyjne rozgałęzianie kodu
+
+W szablonach często chcemy wykonać różny kod w zależności od właściwości typu.
+Przed C++17 wymagało to specjalizacji szablonów lub techniki SFINAE (Substitution Failure Is Not An Error — mechanizm, w którym nieudana podstawienie typu powoduje odrzucenie przeciążenia, a nie błąd kompilacji) — obu skomplikowanych.
+
+Przykład problemu w C++11/14 — funkcja wypisująca wartość, inaczej dla liczb i napisów:
+```cpp
+// C++11: trzeba pisać dwie specjalizacje
+template <typename T>
+void wypisz(T val) { std::cout << val; }
+
+template <>
+void wypisz(std::string val) { std::cout << '"' << val << '"'; }
+```
+
+C++17 wprowadza `if constexpr` — instrukcję warunkową ewaluowaną **w czasie kompilacji**.
+Gałąź, której warunek jest fałszywy, **nie jest kompilowana** dla danej instancji szablonu:
+```cpp
+#include <type_traits>
+
+template <typename T>
+void wypisz(T val)
+{
+    if constexpr (std::is_same_v<T, std::string>)
+    {
+        std::cout << '"' << val << '"'; // kompilowane tylko dla T = std::string
+    }
+    else
+    {
+        std::cout << val;               // kompilowane dla pozostałych typów
+    }
+}
+```
+
+Kluczowa różnica względem zwykłego `if`: odrzucona gałąź **nie musi być poprawna**
+dla danego typu — kompilator jej nie sprawdza. Dzięki temu można w jednej funkcji
+używać operacji dostępnych tylko dla niektórych typów:
+```cpp
+template <typename T>
+auto pobierzWartosc(T t)
+{
+    if constexpr (std::is_pointer_v<T>)
+        return *t;  // dereferencja — poprawna tylko dla wskaźników
+    else
+        return t;
+}
+```
+
+Bez `if constexpr` kompilator próbowałby skompilować `*t` nawet dla typów
+niebędących wskaźnikami i zgłaszał błąd.
+
+> **Uwaga:** `if constexpr` działa tylko w szablonach. Poza szablonem zachowuje się
+> jak zwykły `if` — obie gałęzie muszą być poprawne składniowo i typowo.
+
+***
+
+#### (C++17): Structured bindings — destrukturyzacja obiektów
+
+C++17 wprowadza składnię pozwalającą rozłożyć strukturę, krotkę lub tablicę
+na nazwane zmienne w jednej deklaracji:
+
+```cpp
+auto [a, b] = pobierzDwieWartosci();
+```
+
+**Dla struktur i klas:**
+
+```cpp
+struct Punkt { int x; int y; };
+
+Punkt p = {3, 7};
+auto [x, y] = p;  // x == 3, y == 7
+```
+
+**Dla krotek i par:**
+
+```cpp
+std::pair<int, std::string> para = {42, "ala"};
+auto [liczba, tekst] = para;  // liczba == 42, tekst == "ala"
+```
+
+**Dla tablic:**
+
+```cpp
+int tab[3] = {1, 2, 3};
+auto [a, b, c] = tab;  // a == 1, b == 2, c == 3
+```
+
+**Najczęstsze zastosowanie — iteracja po mapie:**
+
+```cpp
+std::map<std::string, int> mapa = {{"ala", 1}, {"ola", 2}};
+
+for (const auto& [klucz, wartosc] : mapa)
+{
+    std::cout << klucz << ": " << wartosc << "\n";
+}
+```
+
+Przed C++17 trzeba było pisać:
+
+```cpp
+for (const auto& para : mapa)
+{
+    std::cout << para.first << ": " << para.second << "\n";
+}
+```
+
+**Wiązanie przez referencję:**
+
+```cpp
+auto& [x, y] = p;  // x i y są referencjami do pól p
+x = 10;            // modyfikuje p.x
+```
+
+Structured bindings działają dla:
+
+* agregatów (struktury bez konstruktorów użytkownika),
+* typów z `std::tuple_size` i `std::get` (krotki, pary),
+* tablic C-stylowych o znanym rozmiarze.
+
+***
+
+#### (C++17): Inicjalizatory w `if` i `switch`
+
+C++17 pozwala umieścić instrukcję inicjalizującą bezpośrednio w warunku `if` i `switch`,
+analogicznie do inicjalizatora w pętli `for`:
+
+```cpp
+if (inicjalizator; warunek)
+{
+    // ...
+}
+```
+
+**Przykład z mapą — szukanie elementu:**
+
+```cpp
+// Przed C++17:
+auto it = mapa.find("klucz");
+if (it != mapa.end())
+{
+    uzyj(it->second);
+}
+// it jest widoczne poza blokiem if — zanieczyszcza zakres
+
+// C++17:
+if (auto it = mapa.find("klucz"); it != mapa.end())
+{
+    uzyj(it->second);
+}
+// it istnieje tylko wewnątrz bloku if
+```
+
+Zmienna zadeklarowana w inicjalizatorze jest widoczna **w obu gałęziach** `if`
+(zarówno `if`, jak i `else`), ale nie poza blokiem:
+
+```cpp
+if (auto wynik = oblicz(); wynik > 0)
+{
+    std::cout << "dodatni: " << wynik;
+}
+else
+{
+    std::cout << "niedodatni: " << wynik; // wynik dostępny też tutaj
+}
+// wynik niedostępny tutaj
+```
+
+**Dla `switch`:**
+
+```cpp
+switch (auto status = pobierzStatus(); status)
+{
+    case 0: /* ... */ break;
+    case 1: /* ... */ break;
+}
+```
+
+Główna zaleta: ograniczenie zasięgu zmiennych pomocniczych do bloku,
+w którym są potrzebne, bez konieczności tworzenia sztucznych zakresów przez `{}`.
+
+***
+
+#### (C++17): `typename` w parametrach szablonu szablonu
+
+Przed C++17 parametr szablonu szablonu (_template template parameter_) wymagał
+użycia słowa kluczowego `class`, nawet jeśli w innych kontekstach dopuszczalne było `typename`:
+
+```cpp
+// C++11/14: tylko class — typename niedozwolone
+template <template <class> class Kontener>
+void funkcja();
+
+// C++17: typename również dozwolone
+template <template <typename> typename Kontener>
+void funkcja();
+```
+
+Obie formy są równoważne — zmiana ma charakter czysto kosmetyczny, ujednolicając
+składnię z resztą języka, gdzie `typename` i `class` w parametrach szablonu
+są wymienne.
+
+***
+
+#### (C++17): Dedukcja argumentów szablonu klasy (CTAD)
+
+Przed C++17 kompilator potrafił dedukować typy dla **funkcji** szablonowych,
+ale nie dla **klas** szablonowych. Przy tworzeniu obiektów trzeba było podawać
+typy jawnie lub używać funkcji pomocniczych (`make_pair`, `make_tuple` itd.):
+
+```cpp
+// C++11/14 — typy trzeba podać jawnie
+std::pair<int, double> p(42, 3.14);
+
+// ...lub użyć funkcji pomocniczej
+auto p = std::make_pair(42, 3.14);
+```
+
+C++17 wprowadza **dedukcję argumentów szablonu klasy** (CTAD — _Class Template
+Argument Deduction_): kompilator może wywnioskować parametry szablonu klasy
+z argumentów konstruktora:
+
+```cpp
+std::pair p(42, 3.14);        // deduuje std::pair<int, double>
+std::vector v{1, 2, 3};       // deduuje std::vector<int>
+std::tuple t(1, 2.5, "ala");  // deduuje std::tuple<int, double, const char*>
+```
+
+**Przewodniki dedukcji (deduction guides)**
+
+Czasem kompilator nie może wywnioskować typów automatycznie — wtedy autor klasy
+może dostarczyć jawny **przewodnik dedukcji**:
+
+```cpp
+template <typename T>
+struct Opakowanie
+{
+    T wartosc;
+    Opakowanie(T v) : wartosc(v) {}
+};
+
+// Przewodnik dedukcji — nie jest konieczny tutaj, ale pokazuje składnię:
+template <typename T>
+Opakowanie(T) -> Opakowanie<T>;
+
+Opakowanie o(42);  // deduuje Opakowanie<int>
+```
+
+Standardowa biblioteka C++17 dostarcza przewodniki dedukcji dla wszystkich
+swoich szablonów (`std::vector`, `std::map`, `std::pair` itd.), dzięki czemu
+funkcje pomocnicze jak `std::make_pair` stają się w większości przypadków zbędne.
+
+##### Uzupełnienie (C++20): CTAD dla klas dziedziczących i aliasów szablonów
+
+C++20 rozszerza CTAD, umożliwiając dedukcję typów również dla:
+* **klas dziedziczących po szablonach**, np.:
+```cpp
+template <typename T>
+struct Baza { T x; };
+
+struct Pochodna : Baza<int> {};
+
+Pochodna p{42};   // C++20: dedukcja działa poprawnie
+```
+
+* **aliasów szablonów**, np.:
+```cpp
+template <typename T>
+using Vec = std::vector<T>;
+
+Vec v{1, 2, 3};   // C++20: dedukuje Vec<int> → std::vector<int>
+```
+
+Dzięki temu CTAD obejmuje więcej konstrukcji języka i eliminuje kolejne przypadki, w których wcześniej trzeba było podawać typy jawnie.
+
+***
+
+#### (C++17): `auto` jako typ parametru szablonu niebędącego typem
+
+Szablony mogą przyjmować nie tylko typy, ale też **wartości** jako parametry
+(tzw. _non-type template parameters_). Przed C++17 typ takiej wartości trzeba
+było podać jawnie:
+
+```cpp
+// C++11/14 — typ parametru musi być jawny
+template <int N>
+struct Tablica { int dane[N]; };
+
+template <std::size_t N>
+struct InnaStruktura { /* ... */ };
+```
+
+C++17 pozwala użyć `auto`, żeby kompilator sam wywnioskował typ parametru:
+
+```cpp
+template <auto N>
+struct Tablica { int dane[N]; };
+
+Tablica<42>  t1; // N ma typ int
+Tablica<42u> t2; // N ma typ unsigned int
+```
+
+Przydatne gdy chcemy napisać szablon działający dla różnych typów całkowitych
+bez powielania kodu:
+
+```cpp
+template <auto Wartosc>
+constexpr auto podwoj()
+{
+    return Wartosc * 2;
+}
+
+podwoj<21>();    // zwraca int 42
+podwoj<21u>();   // zwraca unsigned int 42
+podwoj<21ll>();  // zwraca long long 42
+```
+
+***
+
+#### (C++17): Zmienne `inline`
+
+W C++ obowiązuje **reguła jednej definicji** (ODR — _One Definition Rule_):
+zmienna globalna lub statyczna może być **zdefiniowana tylko raz** w całym programie.
+Funkcje można oznaczać jako `inline`, co pozwala umieszczać ich definicje
+w nagłówkach — kompilator zapewnia, że mimo wielokrotnego dołączenia nagłówka
+powstanie tylko jedna definicja. Zmienne nie miały analogicznego mechanizmu.
+
+Przed C++17 umieszczenie definicji zmiennej w nagłówku i dołączenie go
+w wielu plikach `.cpp` powodowało błąd linkera:
+
+```cpp
+// naglowek.h
+int licznik = 0; // błąd: wielokrotna definicja przy dołączeniu w wielu plikach
+```
+
+Standardowe obejście: deklaracja `extern` w nagłówku i definicja w jednym pliku `.cpp`:
+
+```cpp
+// naglowek.h
+extern int licznik;
+
+// naglowek.cpp
+int licznik = 0;
+```
+
+C++17 wprowadza zmienne `inline` — działają analogicznie do funkcji `inline`:
+
+```cpp
+// naglowek.h
+inline int licznik = 0; // można dołączyć w wielu plikach — linker scala w jedną definicję
+```
+
+Jest to szczególnie przydatne dla **stałych i zmiennych statycznych w klasach**,
+które przed C++17 wymagały osobnej definicji w pliku `.cpp`:
+
+```cpp
+// C++11/14
+struct Konfiguracja
+{
+    static const int MAX = 100;      // deklaracja w klasie
+};
+const int Konfiguracja::MAX;         // definicja wymagana w .cpp
+
+// C++17
+struct Konfiguracja
+{
+    static inline int MAX = 100;     // definicja bezpośrednio w klasie
+};
+```
+
+Zmienne `constexpr` na poziomie klasy są od C++17 **niejawnie `inline`**,
+więc ten konkretny przypadek nie wymaga jawnego `inline`.
+
+***
+
+#### (C++17): Gwarantowane pominięcie kopiowania (copy elision)
+
+Gdy funkcja zwraca obiekt przez wartość, C++ teoretycznie tworzy obiekt tymczasowy
+i kopiuje go (lub przenosi) do miejsca docelowego. W praktyce kompilatory
+od dawna stosowały optymalizację **RVO** (_Return Value Optimization_),
+która eliminowała to kopiowanie — ale była **opcjonalna**. Kompilator mógł,
+ale nie musiał jej zastosować. Oznaczało to, że typ zwracany musiał mieć
+dostępny konstruktor kopiujący lub przenoszący, nawet jeśli w praktyce
+nigdy nie był wywoływany.
+
+C++17 **gwarantuje** pominięcie kopiowania w konkretnym przypadku:
+gdy prvalue (obiekt tymczasowy bez nazwy) jest używane do inicjalizacji
+obiektu tego samego typu. Obiekt tymczasowy jest konstruowany **bezpośrednio**
+w miejscu docelowym — nie ma żadnego pośredniego kopiowania ani przenoszenia:
+
+```cpp
+struct NieKopiowalny
+{
+    NieKopiowalny() = default;
+    NieKopiowalny(const NieKopiowalny&) = delete;
+    NieKopiowalny(NieKopiowalny&&) = delete;
+};
+
+NieKopiowalny stworz()
+{
+    return NieKopiowalny(); // C++17: OK — obiekt konstruowany bezpośrednio w miejscu docelowym
+}
+
+NieKopiowalny obj = stworz(); // C++17: OK — żadne kopiowanie ani przenoszenie nie ma miejsca
+```
+
+W C++11/14 powyższy kod był błędem kompilacji — mimo że kompilator i tak
+nie kopiowałby obiektu, standard wymagał **dostępności** konstruktora kopiującego
+lub przenoszącego.
+
+**Co jest gwarantowane, a co nie:**
+
+* **Gwarantowane** (C++17): inicjalizacja z prvalue tego samego typu —
+  `T obj = T(args)` lub zwracanie prvalue z funkcji.
+* **Niegwarantowane** (nadal opcjonalne): NRVO (_Named_ RVO) — gdy funkcja
+  zwraca **nazwaną** zmienną lokalną. Kompilatory niemal zawsze to robią,
+  ale standard nadal tego nie wymaga.
+
+```cpp
+NieKopiowalny stworz2()
+{
+    NieKopiowalny lokalny; // nazwana zmienna
+    return lokalny;        // NRVO — opcjonalne, zależne od kompilatora
+}
+```
+
+***
+
 #### Jawne operatory konwersji (explicit conversion operators)
 
 W C++98 słowo kluczowe `explicit` można było stosować tylko do konstruktorów, aby zapobiec **niejawnym konwersjom typu** wykonywanym przez konstruktory jednoargumentowe.
@@ -2354,6 +2827,7 @@ void print(const T& t, const Ts&... ts)
     //             → przypadek bazowy
     
     print(ts...); // rekurencja na reszcie
+}
 ```
 ***
 
@@ -3185,7 +3659,7 @@ else [[unlikely]]
     ...
 }
 ```
-##### **Uzupełnienie (C++23): atrybut `[[assume]]`**
+##### Uzupełnienie (C++23): atrybut `[[assume]]`
 
 C++23 wprowadza:
 
@@ -3459,7 +3933,7 @@ z `<algorithm>` — pod warunkiem, że nie wykonują operacji niedozwolonych w `
 
 #### (C++20/C++23): `std::ranges` i `std::format`
 
-##### std::ranges` (C++20)
+##### `std::ranges` (C++20)
 
 C++20 wprowadza bibliotekę `<ranges>`, która dostarcza nowe podejście do algorytmów:
 zamiast par iteratorów (`begin`, `end`) operujemy na **zakresach** (_ranges_) — obiektach,
@@ -3516,6 +3990,501 @@ to błąd kompilacji, a nie błąd wykonania.
 std::println("Wektor: {}", std::vector<int>{1, 2, 3});
 // Wypisze: Wektor: [1, 2, 3]
 ```
+
+***
+
+#### (C++17): `std::string_view`
+
+Funkcje przyjmujące napisy w C++ miały przed C++17 problem z wydajnością:
+przyjmowanie `const std::string&` wymuszało tworzenie obiektu `std::string`
+gdy przekazywano literał lub `const char*`, co wiązało się z alokacją pamięci.
+
+```cpp
+// C++11/14 — każde wywołanie z literałem alokuje std::string
+void wypisz(const std::string& s) { std::cout << s; }
+
+wypisz("hello");        // alokacja: tworzy tymczasowy std::string
+wypisz(bufor, dlugosc); // niemożliwe bez konwersji
+```
+
+C++17 wprowadza `std::string_view` (nagłówek `<string_view>`) —
+**lekki, niewłaścicielski widok** na sekwencję znaków. Wewnętrznie przechowuje
+tylko wskaźnik i długość, bez alokacji i bez kopiowania danych:
+
+```cpp
+#include <string_view>
+
+void wypisz(std::string_view s)
+{
+    std::cout << s;
+}
+
+std::string str = "hello";
+const char* cstr = "world";
+
+wypisz(str);            // brak kopii — widok na dane str
+wypisz(cstr);           // brak kopii — widok na literał
+wypisz("inline");       // brak kopii — widok na literał
+wypisz({"abcdef", 3});  // widok na pierwsze 3 znaki literału
+```
+
+`std::string_view` obsługuje większość operacji `std::string` niemodyfikujących danych:
+`size()`, `empty()`, `substr()`, `find()`, `starts_with()`, `ends_with()`,
+operator `[]`, iteratory.
+
+**Ważne ograniczenia:**
+
+* `std::string_view` **nie jest właścicielem** danych — musi istnieć oryginalny
+  obiekt przez cały czas życia widoku,
+* **nie jest null-terminated** — nie można przekazać `string_view.data()`
+  do funkcji C oczekujących `const char*` bez sprawdzenia,
+* nie nadaje się do przechowywania — tylko do przekazywania jako parametr funkcji.
+
+```cpp
+std::string_view niebezpieczne()
+{
+    std::string s = "hello";
+    return s; // błąd: s zostanie zniszczone, widok będzie nieprawidłowy
+}
+```
+
+**Zalecenie:** używaj `std::string_view` jako typ parametru funkcji wszędzie tam,
+gdzie wcześniej używałeś `const std::string&` i nie potrzebujesz własności nad danymi.
+
+***
+
+#### (C++17): `std::optional`
+
+Funkcje, które mogą nie zwrócić sensownej wartości, miały przed C++17
+kilka nieeleganckich rozwiązań:
+
+```cpp
+// Zwracanie wartości sentinel (magiczna wartość oznaczająca brak wyniku)
+int znajdz(const std::vector<int>& v, int x); // zwraca -1 gdy nie znaleziono
+
+// Zwracanie przez wskaźnik (nullptr = brak wyniku)
+const Rekord* znajdz(const Baza& db, int id);
+
+// Parametr wyjściowy + bool
+bool znajdz(const std::vector<int>& v, int x, int& wynik);
+```
+
+Każde z tych podejść ma wady: wartości sentinel są nieczytelne, wskaźniki
+sugerują dynamiczną alokację, parametry wyjściowe zaburzają czytelność kodu.
+
+C++17 wprowadza `std::optional<T>` (nagłówek `<optional>`) —
+typ, który **może, ale nie musi** zawierać wartość:
+
+```cpp
+#include <optional>
+
+std::optional<int> znajdz(const std::vector<int>& v, int x)
+{
+    for (int i = 0; i < v.size(); ++i)
+        if (v[i] == x) return i;    // zwraca wartość
+    return std::nullopt;             // zwraca brak wartości
+}
+
+auto wynik = znajdz({1, 2, 3}, 2);
+
+if (wynik)                          // sprawdzenie czy wartość istnieje
+    std::cout << *wynik;            // wyłuskanie wartości
+
+// Alternatywnie:
+std::cout << wynik.value_or(-1);    // zwraca wartość lub -1 jeśli brak
+```
+
+**Podstawowe operacje:**
+
+```cpp
+std::optional<int> a = 42;
+std::optional<int> b;               // puste — std::nullopt
+
+a.has_value();  // true
+b.has_value();  // false
+
+*a;             // 42 — wyłuskanie (niezdefiniowane gdy puste)
+a.value();      // 42 — z sprawdzeniem (rzuca std::bad_optional_access gdy puste)
+a.value_or(0);  // 42
+b.value_or(0);  // 0
+```
+
+`std::optional<T>` przechowuje wartość **wewnętrznie** (bez alokacji na stercie)
+— jest to tzw. typ z semantyką wartości, bezpieczny i wydajny.
+
+> **Uwaga:** `std::optional<T&>` (opcjonalna referencja) jest niedozwolone.
+> Użyj `std::optional<std::reference_wrapper<T>>` jeśli naprawdę potrzebujesz.
+
+***
+
+#### (C++17): `std::variant`
+
+`std::variant<T1, T2, ...>` (nagłówek `<variant>`) to **bezpieczna typowo unia** —
+przechowuje dokładnie jedną wartość spośród podanych typów i zawsze wie, który typ
+aktualnie przechowuje.
+
+W C++03/11 unie (`union`) pozwalały przechowywać różne typy w tej samej pamięci,
+ale nie śledziły który typ jest aktywny — dostęp do złego pola to niezdefiniowane zachowanie.
+`std::variant` rozwiązuje ten problem:
+
+```cpp
+#include <variant>
+
+std::variant<int, double, std::string> v;
+
+v = 42;                             // przechowuje int
+std::get<int>(v);                   // 42
+
+v = 3.14;                           // przechowuje double
+std::get<double>(v);                // 3.14
+
+v = std::string("hello");           // przechowuje string
+std::get<std::string>(v);           // "hello"
+
+std::get<int>(v);                   // rzuca std::bad_variant_access — aktywny typ to string
+```
+
+**Sprawdzanie aktywnego typu:**
+
+```cpp
+std::holds_alternative<int>(v);     // false — aktywny typ to string
+v.index();                          // 2 — indeks aktywnego typu (string jest trzeci)
+```
+
+**`std::visit` — odwiedzanie wartości:**
+
+Najczystszy sposób obsługi wszystkich możliwych typów to `std::visit`
+z funktorem lub lambdą:
+
+```cpp
+std::visit([](auto&& val)
+{
+    std::cout << val;
+}, v);
+```
+
+Można też przekazać obiekt z przeciążonymi `operator()` dla każdego typu:
+
+```cpp
+struct Odwiedzajacy
+{
+    void operator()(int i)         { std::cout << "int: " << i; }
+    void operator()(double d)      { std::cout << "double: " << d; }
+    void operator()(std::string s) { std::cout << "string: " << s; }
+};
+
+std::visit(Odwiedzajacy{}, v);
+```
+
+**Typowe zastosowania:**
+
+* wynik funkcji, który może być wartością lub błędem (alternatywa dla wyjątków),
+* węzły drzewa AST w kompilatorach i parserach,
+* komunikaty protokołu sieciowego różnych typów,
+* zastąpienie hierarchii klas wirtualnych gdy typy są znane z góry.
+
+> **Uwaga:** `std::variant` nigdy nie jest pusty — zawsze przechowuje wartość
+> jednego z typów. Wyjątkiem jest stan `valueless_by_exception` po nieudanej
+> operacji przypisania.
+
+***
+
+#### (C++17): `std::any`
+
+`std::any` (nagłówek `<any>`) przechowuje **pojedynczą wartość dowolnego typu**
+z możliwością sprawdzenia typu w czasie wykonywania. W przeciwieństwie do
+`std::variant` nie wymaga z góry listy dopuszczalnych typów:
+
+```cpp
+#include <any>
+
+std::any a = 42;                    // przechowuje int
+std::any b = std::string("hello");  // przechowuje string
+std::any c = 3.14;                  // przechowuje double
+
+std::any_cast<int>(a);              // 42
+std::any_cast<int>(b);              // rzuca std::bad_any_cast — aktywny typ to string
+
+a.type() == typeid(int);            // true
+a.has_value();                      // true
+
+a.reset();                          // czyści wartość
+a.has_value();                      // false
+```
+
+**Kiedy używać `std::any`, a kiedy `std::variant`:**
+
+* `std::variant` — gdy zestaw możliwych typów jest **znany z góry**; bezpieczniejszy,
+  szybszy, sprawdzany w czasie kompilacji. Preferowany wybór.
+* `std::any` — gdy zestaw typów jest **nieznany z góry** lub zmienny
+  (np. system wtyczek, ogólne kontenery konfiguracji, interfejsy skryptowe).
+
+> **Uwaga o wydajności:** `std::any` może alokować pamięć na stercie dla większych
+> obiektów (implementacje zwykle stosują optymalizację małych obiektów dla typów
+> do kilkunastu bajtów). `std::variant` nigdy nie alokuje.
+
+***
+
+#### (C++17): `std::byte`
+
+Przed C++17 do reprezentowania surowych danych binarnych używano `char`
+lub `unsigned char`. Powodowało to niejednoznaczność — `char` służy zarówno
+do przechowywania znaków, jak i surowych bajtów danych:
+
+```cpp
+char bufor[1024]; // czy to tekst czy surowe dane?
+```
+
+C++17 wprowadza `std::byte` (nagłówek `<cstddef>`) — typ semantycznie
+reprezentujący **bajt danych**, nie znak:
+
+```cpp
+#include <cstddef>
+
+std::byte b{0xFF};
+std::byte bufor[1024]; // jasno: surowe dane, nie tekst
+```
+
+`std::byte` obsługuje tylko operacje bitowe — celowo nie obsługuje arytmetyki
+ani konwersji do/z typów całkowitych bez jawnego rzutowania:
+
+```cpp
+std::byte a{0b1010};
+std::byte b{0b1100};
+
+a | b;              // 0b1110 — OR bitowy
+a & b;              // 0b1000 — AND bitowy
+a ^ b;              // 0b0110 — XOR bitowy
+~a;                 // negacja bitowa
+a << 1;             // przesunięcie
+
+int x = a;          // błąd — brak niejawnej konwersji
+int y = std::to_integer<int>(a); // OK — jawna konwersja
+```
+
+Używaj `std::byte` wszędzie tam, gdzie masz do czynienia z surowymi danymi
+binarnymi (bufory sieciowe, serializacja, operacje na plikach binarnych) —
+zamiast `char*` lub `unsigned char*`. Poprawia to czytelność i eliminuje
+przypadkowe traktowanie danych binarnych jako tekstu.
+
+***
+
+#### (C++17): `std::uncaught_exceptions`
+
+C++03 dostarczał funkcję `std::uncaught_exception()` (liczba pojedyncza),
+która zwracała `bool` — `true` jeśli w toku było rozwijanie stosu z powodu wyjątku.
+Używano jej głównie w destruktorach, żeby nie rzucać wyjątku podczas obsługi innego
+wyjątku (co kończy program przez `std::terminate()`).
+
+Problem pojawia się przy zagnieżdżonych wyjątkach i przy `std::exception_ptr` —
+`uncaught_exception()` nie potrafiła odróżnić sytuacji gdy jest jeden wyjątek
+od sytuacji gdy jest ich wiele.
+
+C++17 zastępuje ją funkcją `std::uncaught_exceptions()` (liczba mnoga),
+która zwraca **liczbę** aktywnych, nieprzechwyconych wyjątków:
+
+```cpp
+#include <exception>
+
+struct Strażnik
+{
+    int poziom = std::uncaught_exceptions(); // zapamiętaj liczbę wyjątków przy tworzeniu
+
+    ~Strażnik()
+    {
+        if (std::uncaught_exceptions() > poziom)
+        {
+            // destruktor wywołany podczas obsługi wyjątku — nie rzucaj
+        }
+        else
+        {
+            // destruktor wywołany normalnie — można rzucać
+        }
+    }
+};
+```
+
+`std::uncaught_exception()` (stara wersja) została oznaczona jako przestarzała
+w C++17 i usunięta w C++20.
+
+***
+
+#### (C++17): Iteratory ciągłe (contiguous iterators)
+
+C++11 definiował kilka kategorii iteratorów: input, forward, bidirectional,
+random access. Brakowało jednak formalnej kategorii dla iteratorów gwarantujących,
+że elementy leżą **w ciągłym obszarze pamięci** (jak w tablicy lub `std::vector`).
+
+C++17 dodaje kategorię **contiguous iterator** — iterator, dla którego zachodzi:
+```cpp
+adres(*(it + n)) == adres(*it) + n * sizeof(element)
+```
+
+Ciągłość pamięci gwarantują: `std::vector`, `std::array`, `std::string`,
+`std::string_view` oraz tablice C-stylowe.
+
+Praktyczne znaczenie: kod może teraz formalnie stwierdzić, że dane leżą
+w ciągłym bloku pamięci i bezpiecznie przekazać wskaźnik do API C:
+
+```cpp
+std::vector<int> v = {1, 2, 3};
+
+// Bezpieczne — vector gwarantuje ciągłość (contiguous iterator)
+int* ptr = v.data();
+funkcjaC(ptr, v.size());
+```
+
+C++20 sformalizował to jeszcze bardziej, wprowadzając koncepty
+`std::contiguous_iterator` i `std::contiguous_range`.
+
+***
+
+#### (C++17): Biblioteka systemu plików (`<filesystem>`)
+
+C++17 wprowadza bibliotekę `<filesystem>` (bazującą na `boost::filesystem`),
+która dostarcza przenośne API do operacji na plikach i katalogach.
+Przed C++17 operacje na systemie plików wymagały funkcji zależnych od platformy
+(`stat`, `opendir` na POSIX lub `FindFirstFile` na Windows).
+
+**Podstawowy typ — `std::filesystem::path`:**
+```cpp
+#include <filesystem>
+namespace fs = std::filesystem;
+
+fs::path p = "/home/user/dokument.txt";
+
+p.filename();       // "dokument.txt"
+p.stem();           // "dokument"
+p.extension();      // ".txt"
+p.parent_path();    // "/home/user"
+p.parent_path() / "podkatalog";   // "/home/user/podkatalog" — łączenie ścieżek przez /
+```
+
+**Operacje na plikach i katalogach:**
+```cpp
+fs::exists(p);                          // czy plik/katalog istnieje
+fs::is_regular_file(p);                 // czy to zwykły plik
+fs::is_directory(p);                    // czy to katalog
+fs::file_size(p);                       // rozmiar pliku w bajtach
+fs::last_write_time(p);                 // czas ostatniej modyfikacji
+
+fs::create_directory("nowy_katalog");   // utwórz katalog
+fs::create_directories("a/b/c");        // utwórz całą ścieżkę
+fs::copy(src, dst);                     // kopiuj plik
+fs::rename(src, dst);                   // przenieś/zmień nazwę
+fs::remove(p);                          // usuń plik
+fs::remove_all(p);                      // usuń katalog rekurencyjnie
+```
+
+**Iteracja po katalogu:**
+```cpp
+for (const auto& wpis : fs::directory_iterator("katalog"))
+{
+    std::cout << wpis.path() << "\n";
+}
+
+// Rekurencyjnie:
+for (const auto& wpis : fs::recursive_directory_iterator("katalog"))
+{
+    if (wpis.is_regular_file())
+        std::cout << wpis.path() << "\n";
+}
+```
+
+**Obsługa błędów:**
+
+Funkcje biblioteki mają dwa warianty — rzucający wyjątek i z kodem błędu:
+```cpp
+std::error_code ec;
+fs::exists(p, ec);  // nie rzuca wyjątku — błąd w ec
+if (ec) { /* obsłuż błąd */ }
+```
+
+***
+
+#### (C++17): Równoległe algorytmy STL
+
+C++17 rozszerza algorytmy z `<algorithm>`, `<numeric>` i `<memory>`
+o **polityki wykonania** (_execution policies_), pozwalające uruchamiać je
+równolegle bez ręcznego zarządzania wątkami:
+
+```cpp
+#include <algorithm>
+#include <execution>
+#include <vector>
+
+std::vector<int> v(1'000'000);
+
+// Sekwencyjnie (domyślne zachowanie jak dotychczas)
+std::sort(std::execution::seq, v.begin(), v.end());
+
+// Równolegle — kompilator/biblioteka zarządza wątkami
+std::sort(std::execution::par, v.begin(), v.end());
+
+// Równolegle z wektoryzacją SIMD
+std::sort(std::execution::par_unseq, v.begin(), v.end());
+```
+
+**Trzy standardowe polityki:**
+
+* `std::execution::seq` — sekwencyjne, bez równoległości (jak przed C++17),
+* `std::execution::par` — równoległe wykonanie na wielu wątkach,
+* `std::execution::par_unseq` — równoległe i wektoryzowane (SIMD);
+  funkcja nie może używać mutexów ani alokować pamięci.
+
+Większość algorytmów STL obsługuje polityki wykonania, m.in.:
+`std::sort`, `std::for_each`, `std::transform`, `std::reduce`,
+`std::find`, `std::count`, `std::copy`, `std::fill`.
+
+**Ważne uwagi:**
+
+* Przy `par` i `par_unseq` operacje na współdzielonych danych muszą być
+  bezpieczne wątkowo — biblioteka nie dodaje synchronizacji automatycznie.
+* Rzeczywiste przyspieszenie zależy od implementacji biblioteki standardowej
+  i sprzętu. Na małych danych narzut tworzenia wątków może być większy niż zysk.
+* Wsparcie kompilatorów: GCC wymaga linkowania z `-ltbb` (Intel TBB),
+  MSVC ma wbudowane wsparcie, Clang ma częściowe wsparcie.
+
+***
+
+#### (C++17): Matematyczne funkcje specjalne (`<cmath>`)
+
+C++17 dodaje do nagłówka `<cmath>` zestaw **specjalnych funkcji matematycznych**
+używanych w fizyce, inżynierii i statystyce. Przed C++17 były dostępne tylko
+przez biblioteki zewnętrzne (Boost.Math) lub funkcje specyficzne dla platformy.
+
+Dodane funkcje (wybór najważniejszych):
+
+**Funkcje Bessela** — rozwiązania równania Bessela, używane w analizie falowej,
+elektromagnetyzmie i mechanice kwantowej:
+```cpp
+std::cyl_bessel_j(n, x);   // funkcja Bessela pierwszego rodzaju
+std::cyl_bessel_y(n, x);   // funkcja Bessela drugiego rodzaju
+std::cyl_bessel_i(n, x);   // zmodyfikowana funkcja Bessela pierwszego rodzaju
+std::cyl_bessel_k(n, x);   // zmodyfikowana funkcja Bessela drugiego rodzaju
+std::sph_bessel(n, x);     // sferyczna funkcja Bessela
+```
+
+**Całki eliptyczne** — używane w mechanice (ruch wahadła, orbity) i elektrodynamice:
+```cpp
+std::comp_ellint_1(k);     // pełna całka eliptyczna pierwszego rodzaju
+std::comp_ellint_2(k);     // pełna całka eliptyczna drugiego rodzaju
+std::ellint_1(k, phi);     // niezupełna całka eliptyczna pierwszego rodzaju
+std::ellint_2(k, phi);     // niezupełna całka eliptyczna drugiego rodzaju
+```
+
+**Inne funkcje:**
+```cpp
+std::beta(x, y);           // funkcja beta Eulera
+std::legendre(n, x);       // wielomiany Legendre'a
+std::hermite(n, x);        // wielomiany Hermite'a
+std::laguerre(n, x);       // wielomiany Laguerre'a
+std::riemann_zeta(x);      // funkcja dzeta Riemanna
+std::expint(x);            // całka wykładnicza
+```
+
+> **Nota:** funkcje te są przeznaczone dla kodu naukowego i inżynierskiego.
+> W typowych aplikacjach biznesowych lub systemowych rzadko są potrzebne.
 
 ***
 
@@ -4045,17 +5014,21 @@ int main()
   mogących jednocześnie wykonywać dany fragment kodu.
   `std::binary_semaphore` to uproszczona wersja dla wartości 0/1.
 
-#### Uzupełnienie (C++23): ulepszenia atomików i futures
+***
 
-C++23 wprowadza drobne rozszerzenia w obszarze wielowątkowości:
+#### Uzupełnienie (C++20): ulepszenia atomików i futures
+
+C++20 wprowadza drobne rozszerzenia w obszarze wielowątkowości:
 
 * `std::atomic` zyskuje operacje `wait()`, `notify_one()` i `notify_all()`,
-  pozwalające wątkowi czekać na zmianę wartości atomowej bez mutexa
-  i zmiennej warunkowej — prostszy i wydajniejszy alternatywny wzorzec
-  dla prostych przypadków synchronizacji.
+  pozwalające wątkowi czekać na zmianę wartości atomowej bez użycia
+  mutexa i zmiennej warunkowej — prostszy i wydajniejszy alternatywny
+  wzorzec dla prostych przypadków synchronizacji.
 
-* Poprawiono integrację `std::future` z `std::stop_token` z C++20,
-  umożliwiając bardziej spójne anulowanie zadań asynchronicznych.
+* **Dodano **`std::jthread`** oraz mechanizm zatrzymywania wątków
+(**`std::stop_token`**, **`std::stop_source`**)**. `std::jthread` automatycznie
+dołącza się w destruktorze i umożliwia bezpieczne anulowanie pracy wątku
+poprzez `stop_token`, co znacząco upraszcza zarządzanie cyklem życia wątków.
 
 ***
 
@@ -4736,7 +5709,7 @@ Dzięki wprowadzeniu `decltype` w C++11, wersja `std::result_of` w C++11 **musi*
 
 Standard **C++11** wprowadził zestaw zmian mających na celu poprawę zgodności z językiem **C99**.
 
-### **C++11**
+### C++11
 
 #### Preprocesor
 
