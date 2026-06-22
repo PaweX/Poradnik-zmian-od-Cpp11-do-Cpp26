@@ -164,9 +164,15 @@ def print_report(header_issues, trailing, codeblock_issue):
 def prompt_choice():
     print("\nCo chcesz zrobić?")
     print("  1) Napraw i nadpisz plik (zrobię kopię .bak)")
+    print("     - Naprawia hierarchię nagłówków (zmniejsza skoki >1 poziomu)")
+    print("     - Usuwa niechciane końcowe backslashe '\\' na końcach linii")
+    print("     - Wykrywa nieparzystą liczbę bloków kodu ``` (tylko ostrzega)")
     print("  2) Napraw i zapisz do nowego pliku")
+    print("     - Jak powyżej, bez kopii pliku.")
     print("  3) Pokaż podgląd zmian (pierwsze 20 linii)")
+    print("     - Pokazuje różnice między oryginalnym a naprawionym plikiem")
     print("  4) Pokaż strukturę nagłówków")
+    print("     - Wyświetla drzewo nagłówków z poziomami")
     print("  5) Anuluj")
 
     mapping = {
@@ -192,7 +198,7 @@ def show_preview(old, new, max_lines=20):
 
 
 def main():
-    path_str = input("Podaj ścieżkę do pliku .md: ").strip().strip('"')
+    path_str = input("Podaj ścieżkę do pliku .md (Markdown): \n(żadne zmiany nie będą jeszcze wprowadzone)").strip().strip('"')
     p = Path(path_str)
 
     if not p.exists():
