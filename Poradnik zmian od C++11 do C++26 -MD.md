@@ -1,4 +1,9 @@
 # Poradnik zmian po C++03
+
+Niniejszy poradnik ma na celu przedstawienie i wyjaśnienie wszystkich istotnych zmian,
+jakie zaszły w języku C++ od czasów standardu C++03. Obecnie obejmuje on zmiany
+wprowadzone w C++11, C++14, C++17, C++20 oraz C++23.
+
 ## Cele projektowe C++11:
 
 **Komitet projektowy starał się trzymać kilku kluczowych założeń:**
@@ -124,7 +129,6 @@ Konstruktor przenoszący `std::vector<T>` może **przenieść** wskaźnik do wew
 
 * **Nazwane zmienne nigdy nie są rvalue**, nawet jeśli zadeklarowano je jako `T&&`.
 * Aby wymusić traktowanie nazwanej zmiennej jak rvalue (czyli umożliwić przeniesienie jej zasobów), używamy:
-
 ```cpp
 std::move(x);
 ```
@@ -208,7 +212,6 @@ To jest powód, dla którego przenoszenie istnieje.
 ###### Dlaczego nie kopiować?
 
 Wyobraź sobie kontener:
-
 ```cpp
 std::vector<std::string> v;
 v.push_back("bardzo duży tekst...");
@@ -289,7 +292,6 @@ C++ od zawsze rozróżniał **wyrażenia stałe** — wyrażenia, których warto
 ##### Problem w C++03
 
 W C++03 nie można było używać wywołań funkcji ani konstruktorów w wyrażeniach stałych, ponieważ kompilator nie miał gwarancji, że funkcja jest rzeczywiście stała:
-
 ```cpp
 int pobierzTrzy() { return 3; }
 
@@ -303,7 +305,6 @@ To nie było poprawne w C++03, ponieważ `pobierzTrzy() + 7` nie jest wyrażenie
 ##### C++11: słowo kluczowe `constexpr`
 
 C++11 wprowadził `constexpr`, które pozwala oznaczyć funkcję, konstruktor lub zmienną jako **możliwą do ewaluacji w czasie kompilacji**:
-
 ```cpp
 constexpr int pobierzTrzy() { return 3; }
 
@@ -423,7 +424,6 @@ licznik_globalny = 5; // dozwolone — constinit nie oznacza const
 Przed C++11 tylko stałe integralne mogły być używane w stałych wyrażeniach.
 
 C++11 pozwala:
-
 ```cpp
 constexpr double PRZYSPIESZENIE_GRAWITACYJNE_ZIEMI = 9.8;
 constexpr double PRZYSPIESZENIE_GRAWITACYJNE_KSIEZYCA = PRZYSPIESZENIE_GRAWITACYJNE_ZIEMI / 6.0;
@@ -444,7 +444,6 @@ Zmienne `constexpr`:
 * **Konstruktor kopiujący**, a także inne funkcje członkowskie (np. operatory), w typie posiadającym konstruktory `constexpr` **zwykle również powinny być oznaczone jako `constexpr`**, aby umożliwić zwracanie obiektów przez wartość z funkcji `constexpr` oraz wykonywanie operacji na tych obiektach w czasie kompilacji. Bez tego obiekt mógłby „stracić constexpr‑owość” podczas kopiowania lub operacji.
 
 Przykład:
-
 ```cpp
 struct Wektor2
 {
@@ -1197,6 +1196,21 @@ Ta forma `for`, nazywana **range-based for** (**pętla po zakresie**), iteruje p
 
 Wszystkie kontenery standardowej biblioteki (`std::vector`, `std::array`, `std::list`, itd.) działają z tą pętlą.
 
+##### Uzupełnienie (C++20): inicjalizator w pętli po zakresie
+
+C++20 pozwala umieścić inicjalizator bezpośrednio w pętli `for` po zakresie,
+analogicznie do inicjalizatorów w `if` i `switch` z C++17:
+```cpp
+for (auto kontener = pobierzKontener(); auto& element : kontener)
+{
+    std::cout << element << "\n";
+}
+```
+
+Zmienna zadeklarowana w inicjalizatorze żyje przez cały czas trwania pętli
+i nie jest widoczna poza nią. Przydatne gdy chcemy uniknąć tworzenia zmiennej
+pomocniczej w zewnętrznym zakresie.
+
 ***
 
 #### Funkcje lambda
@@ -1328,6 +1342,33 @@ auto lambda = z.przygotuj();
 
 Przed C++17 jedynym sposobem było ręczne kopiowanie potrzebnych pól przez
 wyrażenia przechwytywania (`[wartosc = this->wartosc]`).
+
+###### Uzupełnienie (C++20): `[=, this]` — jawne przechwytywanie `this` przy `[=]`
+
+W C++17 i wcześniej zapis `[=]` niejawnie przechwytywał `this` przez wskaźnik,
+co było zaskakujące — programista mógł myśleć, że wszystko jest przechwycone
+przez wartość, podczas gdy `this` nadal było wskaźnikiem.
+
+C++20 **zakazuje** niejawnego przechwytywania `this` przez `[=]`.
+Jeśli potrzebujemy zarówno domyślnego przechwytywania przez wartość, jak i `this`,
+musimy napisać to jawnie:
+```cpp
+// C++17: [=] niejawnie przechwytywał też this — dozwolone, ale mylące
+// C++20: [=] bez this — this nie jest przechwycone
+// C++20: [=, this] — jawne przechwycenie this przez wskaźnik
+// C++20: [=, *this] — jawne przechwycenie kopii obiektu (jak w C++17)
+
+struct Zadanie
+{
+    int wartosc = 42;
+
+    auto przygotuj()
+    {
+        return [=, this]() { return wartosc; }; // C++20: jawne
+    }
+};
+```
+
 ***
 
 #### Alternatywna składnia funkcji (trailing return type — typ zwracany po parametrze)
@@ -1921,6 +1962,45 @@ enum Enum2 : unsigned short;
 // więc nie można później zmienić typu bazowego na unsigned short.
 ```
 
+***
+
+##### Uzupełnienie (C++20): `using enum` — import elementów wyliczenia do zakresu
+
+W C++11/17 każde odwołanie do elementu `enum class` wymagało pełnej kwalifikacji:
+```cpp
+enum class Kierunek { Gora, Dol, Lewo, Prawo };
+
+void idz(Kierunek k)
+{
+    if (k == Kierunek::Gora) { ... }   // za każdym razem pełna kwalifikacja
+}
+```
+
+C++20 wprowadza `using enum`, które importuje elementy wyliczenia do bieżącego zakresu:
+```cpp
+void idz(Kierunek k)
+{
+    using enum Kierunek;
+    if (k == Gora) { ... }   // bez kwalifikacji
+}
+```
+
+Szczególnie przydatne w instrukcjach `switch`:
+```cpp
+switch (k)
+{
+    using enum Kierunek;
+    case Gora:  /* ... */ break;
+    case Dol:   /* ... */ break;
+    case Lewo:  /* ... */ break;
+    case Prawo: /* ... */ break;
+}
+```
+
+`using enum` działa zarówno dla `enum class`, jak i zwykłych `enum`.
+
+***
+
 #### Podwójny nawias ostry
 
 W C++03 parser zawsze interpretował `>>` jako:
@@ -2067,13 +2147,11 @@ niebędących wskaźnikami i zgłaszał błąd.
 
 C++17 wprowadza składnię pozwalającą rozłożyć strukturę, krotkę lub tablicę
 na nazwane zmienne w jednej deklaracji:
-
 ```cpp
 auto [a, b] = pobierzDwieWartosci();
 ```
 
 **Dla struktur i klas:**
-
 ```cpp
 struct Punkt { int x; int y; };
 
@@ -2082,21 +2160,18 @@ auto [x, y] = p;  // x == 3, y == 7
 ```
 
 **Dla krotek i par:**
-
 ```cpp
 std::pair<int, std::string> para = {42, "ala"};
 auto [liczba, tekst] = para;  // liczba == 42, tekst == "ala"
 ```
 
 **Dla tablic:**
-
 ```cpp
 int tab[3] = {1, 2, 3};
 auto [a, b, c] = tab;  // a == 1, b == 2, c == 3
 ```
 
 **Najczęstsze zastosowanie — iteracja po mapie:**
-
 ```cpp
 std::map<std::string, int> mapa = {{"ala", 1}, {"ola", 2}};
 
@@ -2107,7 +2182,6 @@ for (const auto& [klucz, wartosc] : mapa)
 ```
 
 Przed C++17 trzeba było pisać:
-
 ```cpp
 for (const auto& para : mapa)
 {
@@ -2116,7 +2190,6 @@ for (const auto& para : mapa)
 ```
 
 **Wiązanie przez referencję:**
-
 ```cpp
 auto& [x, y] = p;  // x i y są referencjami do pól p
 x = 10;            // modyfikuje p.x
@@ -2134,7 +2207,6 @@ Structured bindings działają dla:
 
 C++17 pozwala umieścić instrukcję inicjalizującą bezpośrednio w warunku `if` i `switch`,
 analogicznie do inicjalizatora w pętli `for`:
-
 ```cpp
 if (inicjalizator; warunek)
 {
@@ -2143,7 +2215,6 @@ if (inicjalizator; warunek)
 ```
 
 **Przykład z mapą — szukanie elementu:**
-
 ```cpp
 // Przed C++17:
 auto it = mapa.find("klucz");
@@ -2163,7 +2234,6 @@ if (auto it = mapa.find("klucz"); it != mapa.end())
 
 Zmienna zadeklarowana w inicjalizatorze jest widoczna **w obu gałęziach** `if`
 (zarówno `if`, jak i `else`), ale nie poza blokiem:
-
 ```cpp
 if (auto wynik = oblicz(); wynik > 0)
 {
@@ -2177,7 +2247,6 @@ else
 ```
 
 **Dla `switch`:**
-
 ```cpp
 switch (auto status = pobierzStatus(); status)
 {
@@ -2195,7 +2264,6 @@ w którym są potrzebne, bez konieczności tworzenia sztucznych zakresów przez 
 
 Przed C++17 parametr szablonu szablonu (_template template parameter_) wymagał
 użycia słowa kluczowego `class`, nawet jeśli w innych kontekstach dopuszczalne było `typename`:
-
 ```cpp
 // C++11/14: tylko class — typename niedozwolone
 template <template <class> class Kontener>
@@ -2217,7 +2285,6 @@ są wymienne.
 Przed C++17 kompilator potrafił dedukować typy dla **funkcji** szablonowych,
 ale nie dla **klas** szablonowych. Przy tworzeniu obiektów trzeba było podawać
 typy jawnie lub używać funkcji pomocniczych (`make_pair`, `make_tuple` itd.):
-
 ```cpp
 // C++11/14 — typy trzeba podać jawnie
 std::pair<int, double> p(42, 3.14);
@@ -2229,7 +2296,6 @@ auto p = std::make_pair(42, 3.14);
 C++17 wprowadza **dedukcję argumentów szablonu klasy** (CTAD — _Class Template
 Argument Deduction_): kompilator może wywnioskować parametry szablonu klasy
 z argumentów konstruktora:
-
 ```cpp
 std::pair p(42, 3.14);        // deduuje std::pair<int, double>
 std::vector v{1, 2, 3};       // deduuje std::vector<int>
@@ -2240,7 +2306,6 @@ std::tuple t(1, 2.5, "ala");  // deduuje std::tuple<int, double, const char*>
 
 Czasem kompilator nie może wywnioskować typów automatycznie — wtedy autor klasy
 może dostarczyć jawny **przewodnik dedukcji**:
-
 ```cpp
 template <typename T>
 struct Opakowanie
@@ -2285,12 +2350,420 @@ Dzięki temu CTAD obejmuje więcej konstrukcji języka i eliminuje kolejne przyp
 
 ***
 
+#### (C++20): Koncepty (`concept`, `requires`)
+
+Szablony w C++ od początku miały poważną wadę: błędy wynikające z użycia
+nieodpowiedniego typu ujawniają się dopiero przy instancjacji szablonu
+i generują często kilkadziesiąt linii nieczytelnych komunikatów kompilatora.
+
+Przykład w C++17 — funkcja sumująca elementy:
+```cpp
+template <typename T>
+T suma(T a, T b)
+{
+    return a + b;
+}
+
+suma("ala", "ola"); // błąd kompilacji — ale komunikat jest trudny do zrozumienia
+```
+
+Kompilator zgłosi błąd gdzieś wewnątrz szablonu, nie w miejscu wywołania.
+Nie ma też żadnej informacji o tym, jakiego typu oczekuje funkcja.
+
+C++20 wprowadza **koncepty** — nazwane zestawy wymagań na typy i wartości,
+sprawdzane w czasie kompilacji. Pozwalają one:
+
+* jasno określić jakie typy są akceptowane przez szablon,
+* generować czytelne komunikaty błędów w miejscu wywołania,
+* przeciążać szablony na podstawie właściwości typów.
+
+***
+
+##### Definiowanie konceptu
+
+```cpp
+#include <concepts>
+
+// Koncept: typ T musi obsługiwać operator+ i zwracać T
+template <typename T>
+concept Dodawalny = requires(T a, T b)
+{
+    { a + b } -> std::convertible_to<T>;
+};
+```
+
+Składnia `requires(T a, T b) { wyrażenie; }` to **wyrażenie requires** —
+sprawdza czy dane wyrażenie jest poprawne dla podanych typów.
+`{ a + b } -> std::convertible_to<T>` oznacza dodatkowo, że wynik
+musi być konwertowalny do `T`.
+
+***
+
+##### Używanie konceptu
+
+Trzy równoważne sposoby zastosowania konceptu:
+```cpp
+// Sposób 1: requires po liście parametrów szablonu
+template <typename T>
+    requires Dodawalny<T>
+T suma(T a, T b) { return a + b; }
+
+// Sposób 2: koncept zamiast typename
+template <Dodawalny T>
+T suma(T a, T b) { return a + b; }
+
+// Sposób 3: skrócona składnia (abbreviated function template)
+auto suma(Dodawalny auto a, Dodawalny auto b) { return a + b; }
+```
+
+Teraz wywołanie z nieprawidłowym typem daje czytelny błąd:
+```cpp
+suma("ala", "ola"); // błąd: typ 'const char*' nie spełnia konceptu Dodawalny
+```
+
+Komunikat wskazuje miejsce wywołania i podaje nazwę niespełnionego konceptu.
+
+***
+
+##### Standardowe koncepty (`<concepts>`)
+
+C++20 dostarcza bogaty zestaw gotowych konceptów w nagłówku `<concepts>`:
+
+**Koncepty typów:**
+```cpp
+std::integral<T>          // typ całkowity (int, long, char...)
+std::floating_point<T>    // typ zmiennoprzecinkowy
+std::signed_integral<T>   // całkowity ze znakiem
+std::unsigned_integral<T> // całkowity bez znaku
+std::arithmetic<T>        // całkowity lub zmiennoprzecinkowy
+```
+
+**Koncepty relacji między typami:**
+```cpp
+std::same_as<T, U>        // T i U to ten sam typ
+std::convertible_to<T, U> // T jest konwertowalny do U
+std::derived_from<T, B>   // T dziedziczy po B
+std::common_with<T, U>    // T i U mają wspólny typ
+```
+
+**Koncepty operacji:**
+```cpp
+std::equality_comparable<T>      // T obsługuje == i !=
+std::totally_ordered<T>          // T obsługuje pełne porównanie
+std::copyable<T>                 // T można kopiować
+std::movable<T>                  // T można przenosić
+std::regular<T>                  // T jest kopiowalne, przenoszalne i equality_comparable
+std::invocable<F, Args...>       // F można wywołać z argumentami Args
+std::predicate<F, Args...>       // F zwraca bool dla Args
+```
+
+***
+
+##### Wyrażenia `requires` — szczegóły
+
+Wyrażenie `requires` może zawierać cztery rodzaje wymagań:
+```cpp
+template <typename T>
+concept Kontener = requires(T c)
+{
+    // Wymaganie proste: wyrażenie musi być poprawne
+    c.begin();
+    c.end();
+
+    // Wymaganie typowe: typ musi istnieć
+    typename T::value_type;
+    typename T::iterator;
+
+    // Wymaganie złożone: wyrażenie musi być poprawne i mieć określony typ
+    { c.size() } -> std::convertible_to<std::size_t>;
+
+    // Wymaganie noexcept: wyrażenie musi być noexcept
+    { c.empty() } noexcept -> std::convertible_to<bool>;
+};
+```
+
+***
+
+##### Klauzula `requires` vs wyrażenie `requires`
+
+Warto odróżnić dwa użycia słowa `requires`:
+```cpp
+// Klauzula requires — ogranicza szablon (przyjmuje bool)
+template <typename T>
+    requires std::integral<T>    // klauzula: bool
+void f(T x);
+
+// Wyrażenie requires — sprawdza poprawność wyrażeń (zwraca bool)
+template <typename T>
+    requires requires(T x) { x + x; }  // wyrażenie: sprawdza czy x+x działa
+void g(T x);
+```
+
+Podwójne `requires requires` jest poprawną składnią — pierwsze to klauzula,
+drugie to wyrażenie.
+
+***
+
+##### Porównanie z SFINAE
+
+Przed C++20 podobne efekty osiągano przez SFINAE z `std::enable_if`:
+```cpp
+// C++17 — SFINAE: trudne do czytania i pisania
+template <typename T,
+          std::enable_if_t<std::is_integral_v<T>, int> = 0>
+void f(T x);
+
+// C++20 — koncepty: czytelne i jasne
+template <std::integral T>
+void f(T x);
+```
+
+Koncepty są preferowanym sposobem ograniczania szablonów w C++20 i nowszych.
+SFINAE nadal działa, ale jest uważane za przestarzały idiom w nowym kodzie.
+
+***
+
+#### (C++20): Moduły (`import`, `module`)
+
+Od początku C++ kod był organizowany przy pomocy **nagłówków** (pliki `.h`/`.hpp`)
+dołączanych przez `#include`. System ten ma poważne wady:
+
+* każdy plik `.cpp` dołączający nagłówek **kompiluje go od nowa**,
+* symbole z nagłówka trafiają do **globalnej przestrzeni nazw** pliku,
+* kolejność dołączania nagłówków może mieć znaczenie,
+* makra z jednego nagłówka mogą wpływać na inny,
+* czas kompilacji dużych projektów jest bardzo długi.
+
+C++20 wprowadza **moduły** — nowy mechanizm organizacji kodu, który rozwiązuje
+te problemy.
+
+***
+
+##### Tworzenie modułu
+
+```cpp
+// plik: matematyka.cpp (lub matematyka.ixx na MSVC)
+
+export module matematyka;  // deklaracja modułu
+
+export int dodaj(int a, int b)  // eksportowana funkcja
+{
+    return a + b;
+}
+
+int pomocnicza(int x)  // nieeksportowana — widoczna tylko wewnątrz modułu
+{
+    return x * 2;
+}
+```
+
+Słowo `export` przed `module` deklaruje moduł.
+Słowo `export` przed funkcją lub typem udostępnia go użytkownikom modułu.
+
+***
+
+##### Importowanie modułu
+
+```cpp
+// plik: main.cpp
+
+import matematyka;  // importuje moduł — nie #include
+
+int main()
+{
+    int wynik = dodaj(2, 3);    // 5
+    // pomocnicza(5);           // błąd — nie jest eksportowana
+}
+```
+
+***
+
+##### Eksportowanie bloków i przestrzeni nazw
+
+```cpp
+export module geometria;
+
+// Eksportowanie bloku — wygodne dla wielu deklaracji
+export
+{
+    struct Punkt { int x, y; };
+    double odleglosc(Punkt a, Punkt b);
+}
+
+// Eksportowanie całej przestrzeni nazw
+export namespace geo
+{
+    struct Wektor { double x, y, z; };
+    double dlugosc(Wektor v);
+}
+```
+
+***
+
+##### Podmoduły i partycje
+
+Duże moduły można dzielić na **partycje**:
+
+```cpp
+// plik: matematyka-podstawy.cpp
+export module matematyka:podstawy;  // partycja 'podstawy' modułu 'matematyka'
+
+export int dodaj(int a, int b) { return a + b; }
+```
+
+```cpp
+// plik: matematyka.cpp
+export module matematyka;
+
+export import :podstawy;  // re-eksportuje partycję
+```
+
+***
+
+##### Nagłówkowe jednostki (header units)
+
+Dla stopniowej migracji C++20 pozwala importować tradycyjne nagłówki
+jako moduły (wsparcie zależne od kompilatora):
+
+```cpp
+import <vector>;    // importuje nagłówek standardowy jako moduł
+import "moj.h";     // importuje lokalny nagłówek jako moduł
+```
+
+***
+
+##### Zalety modułów względem nagłówków
+
+* **Szybsza kompilacja** — moduł jest kompilowany raz, wynik jest buforowany,
+* **Izolacja makr** — makra zdefiniowane w module nie przeciekają do importujących,
+* **Brak problemów z kolejnością** — moduły nie zależą od kolejności importu,
+* **Jawna kontrola eksportu** — dokładnie wiadomo co jest publicznym API modułu.
+
+> **Uwaga praktyczna:** wsparcie kompilatorów dla modułów w C++20 jest wciąż
+> niekompletne lub wymaga specjalnej konfiguracji systemu budowania.
+> GCC 11+, Clang 16+ i MSVC 2019+ mają podstawowe wsparcie.
+> Pełne wsparcie narzędzi budowania (CMake, Make) pojawiło się stopniowo
+> po 2022 roku. W nowych projektach warto już używać modułów,
+> ale migracja istniejących dużych projektów wymaga czasu.
+
+***
+
+#### (C++20): Korutyny (`co_await`, `co_return`, `co_yield`)
+
+**Korutyna** to funkcja, która może **zawiesić swoje wykonanie** w połowie
+i **wznowić je później** — bez blokowania wątku i bez tworzenia nowego wątku.
+
+Zwykła funkcja działa sekwencyjnie: wchodzi, wykonuje się, wychodzi.
+Korutyna może wyjść tymczasowo (zawiesić się), a potem wrócić do miejsca
+zawieszenia i kontynuować.
+
+***
+
+##### Trzy nowe słowa kluczowe
+
+* `co_return` — kończy korutynę i opcjonalnie zwraca wartość,
+* `co_yield` — zawiesza korutynę i zwraca wartość pośrednią (jak iterator),
+* `co_await` — zawiesza korutynę i czeka na zakończenie operacji asynchronicznej.
+
+Każda funkcja zawierająca którekolwiek z tych słów kluczowych
+jest automatycznie korutyną.
+
+***
+
+##### Przykład 1 — generator (co_yield)
+
+Korutyna jako generator nieskończonej sekwencji liczb:
+```cpp
+#include <generator> // C++23 — w C++20 wymaga własnej implementacji
+
+std::generator<int> liczby_naturalne()
+{
+    int n = 0;
+    while (true)
+    {
+        co_yield n++;  // zawieś i zwróć n, potem kontynuuj
+    }
+}
+
+int main()
+{
+    for (int x : liczby_naturalne() | std::views::take(5))
+        std::cout << x << " "; // 0 1 2 3 4
+}
+```
+
+Korutyna `liczby_naturalne` nie oblicza wszystkich liczb z góry —
+generuje kolejną dopiero gdy jest potrzebna (**lazy evaluation**).
+
+***
+
+##### Przykład 2 — operacja asynchroniczna (co_await)
+
+Typowe zastosowanie: kod asynchroniczny pisany w stylu sekwencyjnym:
+```cpp
+// Przykład konceptualny — wymaga frameworka asynchronicznego
+Task<std::string> pobierzDane(std::string url)
+{
+    // zawieś korutynę i czekaj na wynik operacji sieciowej
+    // wątek jest wolny w tym czasie — może obsługiwać inne zadania
+    auto odpowiedz = co_await klient.get(url);
+    auto tresc     = co_await odpowiedz.tekst();
+    co_return tresc;
+}
+
+Task<void> main_task()
+{
+    std::string dane = co_await pobierzDane("https://przyklad.pl/api");
+    std::cout << dane;
+}
+```
+
+Kod wygląda sekwencyjnie, ale nie blokuje wątku podczas oczekiwania —
+wątek może w tym czasie wykonywać inne korutyny.
+
+***
+
+##### Jak działają korutyny wewnętrznie
+
+Kompilator przekształca korutynę w obiekt zawierający:
+
+* **ramkę korutyny** (_coroutine frame_) — stan lokalnych zmiennych
+  i miejsce zawieszenia,
+* obiekt **promise** — kontroluje zachowanie korutyny
+  (co zwraca, jak się zawiesza, jak obsługuje wyjątki),
+* obiekt **handle** (`std::coroutine_handle`) — pozwala wznowić
+  lub zniszczyć zawieszoną korutynę.
+
+C++20 dostarcza tylko **niskopoziomowe mechanizmy** (`co_await`, `co_yield`,
+`co_return`, `std::coroutine_handle`, `std::suspend_always`, `std::suspend_never`).
+Wysokopoziomowe typy jak `Task<T>` czy `Generator<T>` muszą być
+dostarczone przez bibliotekę lub napisane przez programistę.
+
+> `std::generator<T>` jest dostępny dopiero od C++23
+> W C++20 można używać np. cppcoro lub własnej implementacji
+
+***
+
+##### Kiedy używać korutyn
+
+* **Generatory** — leniwa generacja sekwencji danych bez buforowania wszystkiego,
+* **Kod asynchroniczny** — operacje I/O, sieciowe, bez blokowania wątków,
+* **Potoki przetwarzania danych** — korutyny jako etapy pipeline,
+* **Maszyny stanów** — zawieszenie w konkretnym stanie, wznowienie po zdarzeniu.
+
+> **Uwaga praktyczna:** korutyny w C++20 to mechanizm niskopoziomowy.
+> W praktyce używa się ich przez biblioteki wyższego poziomu:
+> **cppcoro**, **Asio** (Boost/standalone), **libcoro**, lub frameworki
+> jak Qt (od wersji 6.5) i POCO. Bezpośrednie pisanie własnych typów
+> promise jest skomplikowane i zazwyczaj niepotrzebne.
+
+***
+
 #### (C++17): `auto` jako typ parametru szablonu niebędącego typem
 
 Szablony mogą przyjmować nie tylko typy, ale też **wartości** jako parametry
 (tzw. _non-type template parameters_). Przed C++17 typ takiej wartości trzeba
 było podać jawnie:
-
 ```cpp
 // C++11/14 — typ parametru musi być jawny
 template <int N>
@@ -2301,7 +2774,6 @@ struct InnaStruktura { /* ... */ };
 ```
 
 C++17 pozwala użyć `auto`, żeby kompilator sam wywnioskował typ parametru:
-
 ```cpp
 template <auto N>
 struct Tablica { int dane[N]; };
@@ -2312,7 +2784,6 @@ Tablica<42u> t2; // N ma typ unsigned int
 
 Przydatne gdy chcemy napisać szablon działający dla różnych typów całkowitych
 bez powielania kodu:
-
 ```cpp
 template <auto Wartosc>
 constexpr auto podwoj()
@@ -2337,14 +2808,12 @@ powstanie tylko jedna definicja. Zmienne nie miały analogicznego mechanizmu.
 
 Przed C++17 umieszczenie definicji zmiennej w nagłówku i dołączenie go
 w wielu plikach `.cpp` powodowało błąd linkera:
-
 ```cpp
 // naglowek.h
 int licznik = 0; // błąd: wielokrotna definicja przy dołączeniu w wielu plikach
 ```
 
 Standardowe obejście: deklaracja `extern` w nagłówku i definicja w jednym pliku `.cpp`:
-
 ```cpp
 // naglowek.h
 extern int licznik;
@@ -2354,7 +2823,6 @@ int licznik = 0;
 ```
 
 C++17 wprowadza zmienne `inline` — działają analogicznie do funkcji `inline`:
-
 ```cpp
 // naglowek.h
 inline int licznik = 0; // można dołączyć w wielu plikach — linker scala w jedną definicję
@@ -2362,7 +2830,6 @@ inline int licznik = 0; // można dołączyć w wielu plikach — linker scala w
 
 Jest to szczególnie przydatne dla **stałych i zmiennych statycznych w klasach**,
 które przed C++17 wymagały osobnej definicji w pliku `.cpp`:
-
 ```cpp
 // C++11/14
 struct Konfiguracja
@@ -2397,7 +2864,6 @@ C++17 **gwarantuje** pominięcie kopiowania w konkretnym przypadku:
 gdy prvalue (obiekt tymczasowy bez nazwy) jest używane do inicjalizacji
 obiektu tego samego typu. Obiekt tymczasowy jest konstruowany **bezpośrednio**
 w miejscu docelowym — nie ma żadnego pośredniego kopiowania ani przenoszenia:
-
 ```cpp
 struct NieKopiowalny
 {
@@ -2436,6 +2902,143 @@ NieKopiowalny stworz2()
 
 ***
 
+#### (C++20): Inicjalizatory oznaczone (designated initializers)
+
+C++20 wprowadza składnię pozwalającą inicjalizować pola struktury **po nazwie**,
+analogiczną do mechanizmu z języka C99:
+```cpp
+struct Punkt
+{
+    int x;
+    int y;
+    int z = 0;
+};
+
+Punkt p = { .x = 1, .y = 2 };       // z == 0 (wartość domyślna)
+Punkt q = { .x = 1, .y = 2, .z = 3 };
+```
+
+Zalety względem zwykłej inicjalizacji agregatowej:
+
+* kod jest samodokumentujący — widać które pole otrzymuje którą wartość,
+* zmiana kolejności pól w strukturze nie psuje istniejącego kodu
+  (kompilator zgłosi błąd jeśli nazwy się nie zgadzają),
+* pola pominięte otrzymują wartość domyślną.
+
+**Ważne ograniczenia:**
+
+* pola muszą być inicjalizowane **w kolejności deklaracji** w strukturze,
+* nie można mieszać inicjalizatorów oznaczonych ze zwykłymi,
+* działa tylko dla **agregatów** (struktury bez konstruktorów użytkownika,
+  bez dziedziczenia z klas nieagregatowych).
+
+```cpp
+Punkt r = { .y = 2, .x = 1 }; // błąd — kolejność odwrotna niż w definicji
+Punkt s = { .x = 1, 2 };      // błąd — mieszanie stylów
+```
+
+> **Uwaga:** C99 pozwala na inicjalizatory w dowolnej kolejności i z pominięciem
+> pól między oznaczonymi. C++20 jest tu bardziej restrykcyjny.
+
+***
+
+#### (C++20): Operator trójstronnego porównania (`<=>`)
+
+Przed C++20 implementacja pełnego zestawu operatorów porównania dla klasy
+wymagała pisania sześciu osobnych operatorów: `==`, `!=`, `<`, `>`, `<=`, `>=`.
+Było to żmudne i podatne na błędy — szczególnie gdy logika porównania była złożona.
+
+C++20 wprowadza **operator trójstronnego porównania** `<=>`,
+zwany też operatorem statku kosmicznego (_spaceship operator_).
+Zwraca on nie `bool`, lecz wartość opisującą **relację** między porównywanymi obiektami.
+
+**Typ wyniku zależy od kategorii porównania:**
+
+* `std::strong_ordering` — dla typów z pełnym porządkiem liniowym
+  (np. liczby całkowite): `less`, `equal`, `greater`,
+* `std::weak_ordering` — dla typów gdzie równoważność nie oznacza identyczności
+  (np. porównanie case-insensitive napisów): `less`, `equivalent`, `greater`,
+* `std::partial_ordering` — dla typów gdzie niektóre pary są nieporównywalne
+  (np. liczby zmiennoprzecinkowe — `NaN` nie jest ani mniejszy, ani większy,
+  ani równy): `less`, `equivalent`, `greater`, `unordered`.
+
+**Użycie:**
+```cpp
+#include <compare> // definicje std::strong_ordering / weak_ordering / partial_ordering
+
+int a = 3, b = 5;
+
+auto wynik = a <=> b;
+// wynik NIE jest liczbą typu int.
+// wynik ma typ std::strong_ordering (bo int ma pełny porządek liniowy).
+// std::strong_ordering to typ "enum‑like", który może przyjąć jedną z wartości:
+//   - std::strong_ordering::less
+//   - std::strong_ordering::equal
+//   - std::strong_ordering::greater
+//
+// UWAGA: to NIE są wartości liczbowe (-1, 0, 1)!
+// To symboliczne stany opisujące relację między obiektami.
+
+if (wynik < 0)  std::cout << "a < b";
+    // Porównanie z 0 działa, bo std::strong_ordering ma przeciążone operatory
+    // <, ==, > względem liczby 0.
+    // wynik < 0 jest równoważne:
+    // wynik == std::strong_ordering::less
+    
+if (wynik == 0) std::cout << "a == b"; // wynik == std::strong_ordering::equal
+if (wynik > 0)  std::cout << "a > b"; // wynik == std::strong_ordering::greater
+```
+
+**Automatyczne generowanie operatorów porównania:**
+
+Najważniejsza praktyczna zaleta: zdefiniowanie `operator<=>` w klasie
+automatycznie generuje wszystkie sześć operatorów porównania.
+Dodanie `= default` pozwala kompilatorowi wygenerować porównanie
+pole po polu:
+```cpp
+struct Punkt
+{
+    int x;
+    int y;
+
+    auto operator<=>(const Punkt&) const = default;
+    // kompilator generuje: ==, !=, <, >, <=, >=
+    // porównując kolejno x, potem y
+};
+
+Punkt p1{1, 2}, p2{1, 3};
+
+p1 < p2;   // true — x równe, y mniejsze
+p1 == p2;  // false
+```
+
+**Kiedy `= default` nie wystarczy:**
+
+Jeśli chcemy niestandardowej logiki porównania, definiujemy `operator<=>`
+ręcznie. Wystarczy zdefiniować `<=>` i `==` — reszta jest generowana automatycznie:
+```cpp
+struct NapisCI // porównanie case-insensitive
+{
+    std::string dane;
+
+    std::weak_ordering operator<=>(const NapisCI& inny) const
+    {
+        // porównanie ignorujące wielkość liter
+        return /* ... */;
+    }
+
+    bool operator==(const NapisCI& inny) const
+    {
+        return (*this <=> inny) == std::weak_ordering::equivalent;
+    }
+};
+```
+
+> **Uwaga:** `operator<=>` z `= default` generuje też `operator==` z `= default`.
+> Jeśli definiujesz `<=>` ręcznie, musisz też zdefiniować `==` osobno — kompilator go nie wygeneruje.
+
+***
+
 #### Jawne operatory konwersji (explicit conversion operators)
 
 W C++98 słowo kluczowe `explicit` można było stosować tylko do konstruktorów, aby zapobiec **niejawnym konwersjom typu** wykonywanym przez konstruktory jednoargumentowe.
@@ -2445,7 +3048,6 @@ Przykład problemu:
 
 * inteligentny wskaźnik może mieć `operator bool()`,
 * dzięki temu można go używać w instrukcjach warunkowych:
-
 ```cpp
 if (inteligentnyWskaznik) { ... }
 ```
@@ -2461,7 +3063,6 @@ To klasyczny problem znany jako **idiom bezpiecznego boola** (_safe bool idiom_)
 ##### C++11: `explicit` dla operatorów konwersji
 
 C++11 pozwala oznaczać operatory konwersji jako `explicit`, np.:
-
 ```cpp
 explicit operator bool() const;
 ```
@@ -2490,7 +3091,6 @@ To elegancko rozwiązuje problem **safe bool**.
 
 W C++03 istniał mechanizm **dynamicznych specyfikacji wyjątków** (`throw(...)`),
 pozwalający deklarować, jakie wyjątki funkcja może rzucić:
-
 ```cpp
 void funkcja() throw(std::runtime_error); // może rzucić tylko runtime_error
 void inna()    throw();                   // nie rzuca żadnych wyjątków
@@ -2510,7 +3110,6 @@ C++11 zastępuje go słowem kluczowym `noexcept`.
 ##### `noexcept` jako specyfikator
 
 Oznacza, że funkcja **nie rzuca wyjątków**:
-
 ```cpp
 void funkcja() noexcept;          // nie rzuca wyjątków
 void inna()    noexcept(true);    // równoważne — nie rzuca
@@ -2527,7 +3126,6 @@ przy realokacji.
 
 Dlatego konstruktory przenoszące i operatory przenoszące powinny być oznaczone `noexcept`
 wszędzie tam, gdzie to możliwe:
-
 ```cpp
 class Bufor
 {
@@ -2550,7 +3148,6 @@ public:
 
 `noexcept(wyrażenie)` użyte jako **operator** (nie specyfikator) zwraca `bool`
 w czasie kompilacji — `true` jeśli wyrażenie nie może rzucić wyjątku:
-
 ```cpp
 int x = 5;
 constexpr bool a = noexcept(x + 1);      // true — dodawanie int nie rzuca
@@ -2559,7 +3156,6 @@ constexpr bool b = noexcept(new int(1)); // false — new może rzucić bad_allo
 
 Pozwala to warunkowo oznaczać funkcje jako `noexcept` na podstawie właściwości
 używanych przez nie typów:
-
 ```cpp
 template <typename T>
 void zamien(T& a, T& b) noexcept(noexcept(T(std::move(a))))
@@ -2578,7 +3174,6 @@ Funkcja `zamien` jest `noexcept` dokładnie wtedy, gdy przenoszenie `T` jest `no
 
 Od C++17 `noexcept` jest częścią **typu** funkcji, a nie tylko jej deklaracji.
 Wskaźnik do funkcji `noexcept` i wskaźnik do zwykłej funkcji to różne typy:
-
 ```cpp
 void f() noexcept;
 void g();
@@ -2602,7 +3197,6 @@ W C++03 można było tworzyć `typedef`, ale tylko jako alias **konkretnego typu
 Nie można było tworzyć aliasów **samych szablonów**.
 
 Przykład niepoprawny w C++03:
-
 ```cpp
 template <typename Pierwszy, typename Drugi, int Trzeci>
 class JakisTyp;
@@ -2616,7 +3210,6 @@ typedef JakisTyp<InnyTyp, Drugi, 5> NazwaTypedefu; // Niepoprawne w C++03
 ##### C++11: aliasy szablonów przez `using`
 
 C++11 wprowadza składnię:
-
 ```cpp
 template <typename Pierwszy, typename Drugi, int Trzeci>
 class JakisTyp;
@@ -2650,14 +3243,12 @@ W poprzednich wersjach C++ szablonami mogły być jedynie funkcje, klasy oraz al
 C++14 rozszerza ten mechanizm, pozwalając tworzyć **szablonowe zmienne** — czyli zmienne, których typ i wartość zależą od parametru szablonu.
 
 Przykładowo, można zdefiniować stałą `PI` zależną od typu:
-
 ```cpp
 template <typename T>
 constexpr T PI = T(3.141592653589793238462643383);
 ```
 
 Dzięki temu:
-
 ```cpp
 double d = PI<double>;       // 3.1415926535897931...
 float  f = PI<float>;        // 3.1415927f
@@ -2665,7 +3256,6 @@ int    i = PI<int>;          // 3
 ```
 
 Zmienne szablonowe podlegają **tym samym zasadom specjalizacji**, co funkcje i klasy szablonowe:
-
 ```cpp
 template <>
 constexpr const char* PI<const char*> = "pi";
@@ -2696,7 +3286,6 @@ Jeśli unia zawiera typ z nietrywialnymi funkcjami specjalnymi, to:
 * trzeba je zdefiniować ręcznie.
 
 Przykład unii dozwolonej w C++11:
-
 ```cpp
 #include <new> // Potrzebne do użycia placement 'new'.
 
@@ -2836,7 +3425,6 @@ void print(const T& t, const Ts&... ts)
 W C++11/14 rozwijanie paczki parametrów wymagało rekurencji szablonów
 (jak w przykładzie z `print` powyżej). C++17 wprowadza **wyrażenia fold**,
 które pozwalają zastosować operator do całej paczki bez rekurencji:
-
 ```cpp
 template <typename... Args>
 auto suma(Args... args)
@@ -2855,7 +3443,6 @@ Cztery formy wyrażeń fold (`op` to dowolny operator binarny, `e` to wartość 
 * `(e op ... op pack)` — lewostronne fold z wartością początkową.
 
 Przykład z wartością początkową (bezpieczny dla pustej paczki):
-
 ```cpp
 template <typename... Args>
 auto suma(Args... args)
@@ -2941,7 +3528,6 @@ Zasady:
 
 C++11 wprowadził literały napisowe UTF-8 (`u8"..."`), ale nie miał odpowiednika
 dla pojedynczych znaków. C++17 dodaje literały znakowe UTF-8:
-
 ```cpp
 char c = u8'a'; // znak ASCII / Basic Latin w kodowaniu UTF-8
 ```
@@ -3064,7 +3650,6 @@ ponieważ prefiksy (`u8`, `u`, `U`, `L`) zmieniają znaczenie i typ znaków.
 Literały przetwarzające surową formę definiuje się przez `operator""`.
 
 Przykład:
-
 ```cpp
 OutputType operator""_mysuffix(const char* literal_string)
 {
@@ -3079,7 +3664,6 @@ assert(some_variable.get_value() == 1234.0);
 ```
 
 Instrukcja:
-
 ```cpp
 OutputType some_variable = 1234_mysuffix;
 ```
@@ -3326,6 +3910,25 @@ Gwarantuje się, że:
 * ma **nie mniej niż 64 bity**.
 
 Typ ten został pierwotnie wprowadzony w standardzie **C99**, a większość kompilatorów C++ już wcześniej wspierała go jako rozszerzenie.
+
+***
+
+##### Uzupełnienie (C++20): gwarantowana reprezentacja two's complement
+
+C++20 gwarantuje, że wszystkie typy całkowite ze znakiem używają reprezentacji
+**uzupełnienia do dwóch** (ang. _two's complement_). Przed C++20 standard
+dopuszczał inne reprezentacje (uzupełnienie do jedności, znak-moduł),
+choć w praktyce wszystkie liczące się platformy używały two's complement.
+
+Oznacza to, że:
+
+* konwersje między typami całkowitymi ze znakiem i bez znaku są teraz
+  w pełni zdefiniowane i przewidywalne,
+* operacje bitowe na liczbach ze znakiem mają dokładnie zdefiniowane wyniki.
+
+> **Uwaga:** przepełnienie liczb całkowitych ze znakiem (`signed integer overflow`)
+> nadal jest **niezdefiniowanym zachowaniem** — gwarancja two's complement
+> nie zmienia tego faktu.
 
 ***
 
@@ -3911,10 +4514,34 @@ auto [it, wstawiono] = m.insert_or_assign("klucz", nowaWartosc);
 Przed C++17 osiągano ten efekt przez `operator[]`, ale `operator[]`
 wymaga, żeby typ wartości miał konstruktor domyślny — `insert_or_assign` nie ma tego wymagania.
 
+##### Uzupełnienie (C++20): `std::erase` i `std::erase_if`
+
+Usuwanie elementów z kontenerów sekwencyjnych wymagało przed C++20
+idiomatycznego zapisu zwanego _erase-remove idiom_:
+```cpp
+// C++11/17 — usunięcie wszystkich wartości 42 z wektora
+v.erase(std::remove(v.begin(), v.end(), 42), v.end());
+```
+
+C++20 wprowadza wolnostojące funkcje upraszczające ten wzorzec:
+```cpp
+#include <vector>
+
+std::vector<int> v = {1, 2, 3, 2, 4, 2};
+
+std::erase(v, 2);           // usuwa wszystkie elementy równe 2
+// v == {1, 3, 4}
+
+std::erase_if(v, [](int x) { return x % 2 == 0; }); // usuwa parzyste
+```
+
+`std::erase` i `std::erase_if` działają dla większości standardowych kontenerów
+sekwencyjnych: `std::vector`, `std::list`, `std::deque`, `std::string`.
+Dla kontenerów asocjacyjnych (`std::map`, `std::set`) działa tylko `std::erase_if`.
+
 ##### Uzupełnienie (C++20): kontenery i algorytmy constexpr
 
 C++20 pozwala używać wielu kontenerów i algorytmów w kontekście `constexpr`, np.:
-
 ```cpp
 constexpr auto suma = []() {
     std::vector<int> v = {1, 2, 3};
@@ -4029,8 +4656,19 @@ wypisz({"abcdef", 3});  // widok na pierwsze 3 znaki literału
 ```
 
 `std::string_view` obsługuje większość operacji `std::string` niemodyfikujących danych:
-`size()`, `empty()`, `substr()`, `find()`, `starts_with()`, `ends_with()`,
-operator `[]`, iteratory.
+`size()`, `empty()`, `substr()`, `find()`, `starts_with()`, `ends_with()`, operator `[]`, iteratory.
+
+Od C++20 zarówno `std::string_view`, jak i `std::string` zyskują metody
+`starts_with()` i `ends_with()`:
+```cpp
+std::string_view sv = "hello world";
+
+sv.starts_with("hello"); // true
+sv.ends_with("world");   // true
+
+std::string s = "plik.txt";
+s.ends_with(".txt");     // true
+```
 
 **Ważne ograniczenia:**
 
@@ -4050,6 +4688,69 @@ std::string_view niebezpieczne()
 
 **Zalecenie:** używaj `std::string_view` jako typ parametru funkcji wszędzie tam,
 gdzie wcześniej używałeś `const std::string&` i nie potrzebujesz własności nad danymi.
+
+***
+
+#### (C++20): `std::span`
+
+`std::span<T>` (nagłówek `<span>`) to **niewłaścicielski widok** na ciągły
+obszar pamięci — analogiczny do `std::string_view`, ale dla dowolnych typów,
+nie tylko znaków. W przeciwieństwie do `std::string_view`, `std::span` pozwala
+**modyfikować** elementy.
+
+Przed C++20 funkcje przyjmujące tablice lub wektory miały problem z ujednoliceniem
+interfejsu — trzeba było pisać wiele przeciążeń lub przyjmować parę wskaźnik+rozmiar:
+```cpp
+// C++11/17 — trzy różne przeciążenia dla tego samego zadania
+void przetwarzaj(const std::vector<int>& v);
+void przetwarzaj(const int* ptr, std::size_t n);
+void przetwarzaj(std::array<int, 5>& arr);
+```
+
+C++20 rozwiązuje to przez `std::span`:
+```cpp
+#include <span>
+
+void przetwarzaj(std::span<int> dane)
+{
+    for (int& x : dane)
+        x *= 2;
+}
+
+std::vector<int> v = {1, 2, 3};
+int tab[] = {4, 5, 6};
+std::array<int, 3> arr = {7, 8, 9};
+
+przetwarzaj(v);    // działa
+przetwarzaj(tab);  // działa
+przetwarzaj(arr);  // działa
+```
+
+**Rozmiar statyczny i dynamiczny:**
+
+`std::span` może mieć rozmiar znany w czasie kompilacji (_static extent_)
+lub w czasie wykonywania (_dynamic extent_):
+```cpp
+std::span<int>       dynamiczny = v;    // rozmiar znany w runtime
+std::span<int, 3>    statyczny  = arr;  // rozmiar 3 znany w czasie kompilacji
+```
+
+**Podzakresy:**
+```cpp
+std::span<int> s(v);
+
+s.first(2);        // pierwsze 2 elementy
+s.last(2);         // ostatnie 2 elementy
+s.subspan(1, 2);   // elementy od indeksu 1, długość 2
+```
+
+**Ważne:** `std::span` nie jest właścicielem danych — oryginalny kontener
+musi żyć przez cały czas życia `span`. Modyfikacje przez `span` modyfikują
+oryginalne dane.
+
+> **Zalecenie:** używaj `std::span<T>` jako parametru funkcji wszędzie tam,
+> gdzie wcześniej przyjmowałeś parę `(T*, size_t)` lub gdzie pisałeś
+> wielokrotne przeciążenia dla różnych kontenerów ciągłych.
 
 ***
 
@@ -4269,6 +4970,153 @@ przypadkowe traktowanie danych binarnych jako tekstu.
 
 ***
 
+#### (C++20): `std::bit_cast`
+
+Reinterpretacja bitowej reprezentacji jednego typu jako innego typu była
+przed C++20 możliwa przez `memcpy` lub przez `reinterpret_cast` na wskaźnikach —
+obie metody są nieeleganckie, a druga jest technicznie niezdefiniowanym
+zachowaniem w wielu przypadkach (naruszenie strict aliasing).
+
+C++20 wprowadza `std::bit_cast<To>(from)` (nagłówek `<bit>`) —
+bezpieczną, `constexpr`-kompatybilną reinterpretację bitową:
+```cpp
+#include <bit>
+#include <cstdint>
+
+float f = 1.0f;
+
+// Pobierz bitową reprezentację float jako uint32_t
+uint32_t bits = std::bit_cast<uint32_t>(f); // 0x3F800000
+
+// Odwrotnie
+float z_powrotem = std::bit_cast<float>(bits); // 1.0f
+```
+
+Wymagania:
+
+* `sizeof(To) == sizeof(From)` — typy muszą mieć ten sam rozmiar,
+* oba typy muszą być **trivially copyable**,
+* wynik jest `constexpr` jeśli oba typy są odpowiednie.
+
+Typowe zastosowania:
+
+* inspekcja reprezentacji IEEE 754 liczb zmiennoprzecinkowych,
+* niskopoziomowe protokoły sieciowe i serializacja,
+* implementacje algorytmów korzystających z reprezentacji bitowej
+  (np. szybki odwrotny pierwiastek kwadratowy).
+
+```cpp
+// Klasyczny przykład: sprawdzenie bitu znaku float
+float f = -3.14f;
+uint32_t bits = std::bit_cast<uint32_t>(f);
+bool ujemna = (bits >> 31) & 1; // true
+```
+
+***
+
+#### (C++20): Operacje bitowe (`<bit>`)
+
+C++20 dodaje nagłówek `<bit>` z zestawem funkcji do operacji na bitowej
+reprezentacji liczb całkowitych bez znaku. Przed C++20 operacje te
+wymagały implementacji zależnych od kompilatora (np. `__builtin_popcount` w GCC)
+lub ręcznego pisania algorytmów.
+
+**Liczenie bitów:**
+```cpp
+#include <bit>
+#include <cstdint>
+
+uint32_t x = 0b1010'1100u;
+
+std::popcount(x);        // 4 — liczba bitów ustawionych na 1
+std::countl_zero(x);     // liczba zer wiodących (od lewej)
+std::countl_one(x);      // liczba jedynek wiodących (od lewej)
+std::countr_zero(x);     // liczba zer końcowych (od prawej)
+std::countr_one(x);      // liczba jedynek końcowych (od prawej)
+```
+
+**Potęgi dwójki:**
+```cpp
+std::has_single_bit(8u);       // true — 8 jest potęgą dwójki
+std::has_single_bit(6u);       // false
+
+std::bit_ceil(5u);             // 8 — najmniejsza potęga dwójki >= 5
+std::bit_floor(5u);            // 4 — największa potęga dwójki <= 5
+std::bit_width(5u);            // 3 — minimalna liczba bitów do reprezentacji 5
+```
+
+**Rotacje bitowe:**
+```cpp
+uint8_t b = 0b1010'0001u;
+
+std::rotl(b, 1);   // 0b0100'0011 — rotacja w lewo o 1
+std::rotr(b, 1);   // 0b1101'0000 — rotacja w prawo o 1 (uwaga: przykład poglądowy)
+```
+
+Wszystkie funkcje działają tylko dla typów całkowitych **bez znaku**
+i są `constexpr`.
+
+***
+
+#### (C++20): Kalendarz i strefy czasowe (`<chrono>`)
+
+C++20 znacząco rozszerza nagłówek `<chrono>` o obsługę kalendarza
+i stref czasowych. Przed C++20 `<chrono>` zawierał tylko typy czasu trwania
+(`duration`) i punkty w czasie (`time_point`), ale nie miał pojęcia
+o datach, godzinach ani strefach czasowych.
+
+**Typy dat:**
+```cpp
+#include <chrono>
+using namespace std::chrono;
+
+// Konstruowanie dat
+year_month_day dzisDzien = 2024y / January / 15;
+year_month_day innyDzien = {year(2024), month(1), day(15)};
+
+// Dostęp do składowych
+dzisDzien.year();   // 2024
+dzisDzien.month();  // January
+dzisDzien.day();    // 15
+
+// Sprawdzenie poprawności daty
+dzisDzien.ok();     // true — data jest poprawna
+(2024y / February / 30).ok(); // false — 30 lutego nie istnieje
+```
+
+**Arytmetyka na datach:**
+```cpp
+year_month_day data = 2024y / March / 1;
+
+// Dodawanie miesięcy i lat
+auto nastepnyMiesiac = data + months{1};  // 2024/April/1
+auto nastepnyRok     = data + years{1};   // 2025/March/1
+```
+
+**Strefy czasowe:**
+```cpp
+// Bieżący czas w UTC
+auto teraz = system_clock::now();
+
+// Konwersja do strefy czasowej
+auto* strefa = locate_zone("Europe/Warsaw");
+auto lokalny = zoned_time{strefa, teraz};
+
+std::cout << lokalny << "\n"; // wypisuje czas lokalny z offsetem
+```
+
+**Formatowanie dat:**
+```cpp
+// C++20 + std::format
+auto data = 2024y / January / 15;
+std::string s = std::format("{:%Y-%m-%d}", data); // "2024-01-15"
+```
+
+> **Nota:** obsługa stref czasowych wymaga dostępu do bazy danych stref
+> (IANA Time Zone Database). Na Windows może wymagać dodatkowej konfiguracji.
+
+***
+
 #### (C++17): `std::uncaught_exceptions`
 
 C++03 dostarczał funkcję `std::uncaught_exception()` (liczba pojedyncza),
@@ -4286,11 +5134,11 @@ która zwraca **liczbę** aktywnych, nieprzechwyconych wyjątków:
 ```cpp
 #include <exception>
 
-struct Strażnik
+struct Straznik
 {
     int poziom = std::uncaught_exceptions(); // zapamiętaj liczbę wyjątków przy tworzeniu
 
-    ~Strażnik()
+    ~Straznik()
     {
         if (std::uncaught_exceptions() > poziom)
         {
@@ -4663,7 +5511,6 @@ które zwalniają mutex automatycznie przy wyjściu z zakresu
 
 `std::lock_guard` to najprostszy taki obiekt — blokuje mutex w konstruktorze
 i zwalnia w destruktorze:
-
 ```cpp
 #include <mutex>
 #include <thread>
@@ -4708,7 +5555,6 @@ Dostępne są też inne warianty mutexa:
 zamiast aktywnie sprawdzać go w pętli (co marnuje czas procesora).
 
 Typowy wzorzec producent–konsument:
-
 ```cpp
 #include <condition_variable>
 #include <mutex>
@@ -5267,6 +6113,15 @@ C++11 dostarcza `std::unique_ptr` oraz ulepszenia dla `std::shared_ptr` i `std::
 * **C++17** — poprawiono integrację `std::shared_ptr` z tablicami.
 * **C++20** — inteligentne wskaźniki mogą być używane w większej liczbie kontekstów `constexpr`.
 
+  C++20 rozszerza `std::make_shared` i `std::allocate_shared` o obsługę tablic:
+```cpp
+  auto ptr = std::make_shared<int[]>(10);    // tablica 10 int-ów
+  auto ptr2 = std::make_shared<int[5]>();    // tablica 5 int-ów (rozmiar w typie)
+  ptr[0] = 42;
+```
+
+  Przed C++20 `std::shared_ptr` obsługiwał tablice, ale `std::make_shared` nie — trzeba było używać `std::shared_ptr<int[]>(new int[10])`.
+
 ***
 
 ### Rozszerzalny mechanizm liczb losowych (Extensible random number facility)
@@ -5311,7 +6166,6 @@ C++11 udostępnia też wiele standardowych rozkładów, m.in.:
 * `piecewise_linear_distribution`.
 
 Przykład łączenia silnika i rozkładu:
-
 ```cpp
 #include <functional>
 #include <random>
@@ -5346,7 +6200,6 @@ Opakowania referencji są podobne do zwykłych referencji języka C++ (`&`).
 Aby uzyskać opakowanie referencji z dowolnego obiektu, używa się funkcji szablonowej `ref` (dla referencji stałej — `cref`).
 
 Opakowania referencji są szczególnie przydatne w funkcjach szablonowych, gdy chcemy przekazywać **referencje** do parametrów zamiast ich **kopiować**:
-
 ```cpp
 #include <functional>
 #include <iostream>
